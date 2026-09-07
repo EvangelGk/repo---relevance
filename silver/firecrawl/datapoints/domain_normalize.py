@@ -5,6 +5,15 @@ protocol, www, and tracking subdomains (app./docs./blog./marketing.) plus
 query/UTM params, so a marketing site vs. app. vs docs. subdomain don't
 resolve to three different "companies" - the single most common
 entity-resolution bug in this pipeline.
+
+context["source_url"]-only (fixed 2026-09-08). This used to fall back to
+"the first link found anywhere on the page" when no source_url was given -
+but that guess is frequently *wrong*, not just empty: a footer's first
+link is often a social profile (LinkedIn, Twitter) or a partner site, not
+the page's own domain, so the fallback could confidently mislabel a row
+under someone else's domain. Scraping a page always requires already
+knowing its URL, so context["source_url"] should be supplied by whatever
+pipeline calls Firecrawl - this function no longer guesses when it isn't.
 """
 from urllib.parse import urlparse
 
@@ -22,15 +31,11 @@ class DomainNormalize(DataPointExtractor):
     def extract(self, markdown: str, context: dict):
         raw_url = context.get("source_url")
         source = context.get("source", "firecrawl")
-        used_context_override = bool(raw_url)
-        if not raw_url:
-            links = context.get("_links") or []
-            raw_url = next((url for _, url in links), None)
         if not raw_url:
             self._last_source = None
             return None
         value = self.normalize(raw_url, source)
-        self._last_source = ("context" if used_context_override else "markdown") if value else None
+        self._last_source = "context" if value else None
         return value
 
     @staticmethod

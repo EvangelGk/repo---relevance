@@ -3,8 +3,8 @@ Acme Inc.") -> {legal_name, copyright_year}
 
 Gives the registrable legal name vs. the marketing brand name - two
 different strings for the same company, and a real entity-resolution
-trap. conflict_check.py cross-checks this against
-structured_data_extract's JSON-LD org name.
+trap. conflict_check.py cross-checks this against an explicit
+company_name context override, if one was given.
 """
 import re
 

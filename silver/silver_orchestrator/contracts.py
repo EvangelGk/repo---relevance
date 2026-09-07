@@ -1,8 +1,16 @@
-"""Single source of truth for what each of Firecrawl's 17 datapoint
-functions is contractually expected to produce - mirrors the finance
-project's SeriesContract/SourceContract pattern: frozen dataclasses instead
-of magic numbers scattered across schema_gate.py, quality_score.py, and
-drift.py.
+"""Single source of truth for what each of Firecrawl's datapoint functions
+is contractually expected to produce - mirrors the finance project's
+SeriesContract/SourceContract pattern: frozen dataclasses instead of magic
+numbers scattered across schema_gate.py, quality_score.py, and drift.py.
+
+Trimmed 2026-09-08 from the original 17-plus-company_description_extract
+set down to this list: structured_data_extract (needed JSON-LD that
+cleaned markdown never preserves), regulatory_event_classify (near-zero
+hit rate outside regulated industries), timeseries_snapshot and freshness
+(both depended on inputs - structured_data's employee count, a
+re-enrichment history DB - that don't exist in this pipeline yet) were all
+removed rather than kept as permanently-empty columns. See datapoints/
+docstrings for the per-function reasoning.
 
 null_tolerance_pct and required were set from the 50-doc sample referenced
 in the schema-expansion round: most B2B company pages simply don't publish
@@ -39,13 +47,13 @@ class DatapointContract:
 DATAPOINT_CONTRACTS: Dict[str, DatapointContract] = {
     "domain_normalize": DatapointContract(
         required=True,
-        null_tolerance_pct=10.0,  # almost every page resolves to some root domain
-        source_priority=("context", "markdown"),
-    ),
-    "structured_data_extract": DatapointContract(
-        required=False,
-        null_tolerance_pct=60.0,  # most pages have no JSON-LD Organization block
-        source_priority=("html",),
+        # context-only since 2026-09-08 (the markdown-link-guessing fallback
+        # was removed for being actively wrong, not just empty - see the
+        # datapoint's own docstring). Tolerance stays low: whatever pipeline
+        # calls Firecrawl always knows the URL it just scraped, so a missing
+        # context["source_url"] is a caller bug, not something to tolerate.
+        null_tolerance_pct=10.0,
+        source_priority=("context",),
     ),
     "social_links_extract": DatapointContract(
         required=False,
@@ -64,8 +72,10 @@ DATAPOINT_CONTRACTS: Dict[str, DatapointContract] = {
     ),
     "site_locale_detect": DatapointContract(
         required=False,
-        null_tolerance_pct=40.0,  # single-language sites often carry no lang/hreflang tag at all
-        source_priority=("hreflang", "markdown_fallback"),
+        # markdown-only since 2026-09-08 (the hreflang/lang-attribute path
+        # was removed - structurally dead against real cleaned markdown).
+        null_tolerance_pct=40.0,  # single-language sites often never spell out their language
+        source_priority=("markdown",),
     ),
     "pricing_locale_extract": DatapointContract(
         required=False,
@@ -79,7 +89,11 @@ DATAPOINT_CONTRACTS: Dict[str, DatapointContract] = {
     ),
     "tech_stack_normalize": DatapointContract(
         required=False,
-        null_tolerance_pct=55.0,  # detected_tools context is frequently unavailable
+        # Lowered from 55.0 on 2026-09-08 after broadening the vendor
+        # catalog from 18 to ~75 names across 13 categories - detected_tools
+        # context is still frequently unavailable, but mentioned_technologies
+        # alone now has meaningfully better recall against real prose.
+        null_tolerance_pct=40.0,
         source_priority=("context", "markdown"),
     ),
     "business_model": DatapointContract(
@@ -97,26 +111,10 @@ DATAPOINT_CONTRACTS: Dict[str, DatapointContract] = {
         null_tolerance_pct=15.0,  # low - this is the canonical join key
         source_priority=("context", "markdown"),
     ),
-    "regulatory_event_classify": DatapointContract(
-        required=False,
-        null_tolerance_pct=90.0,  # HIGH - most companies never appear in a regulatory event
-        source_priority=("context", "markdown"),
-        enum_values=("RECALL", "APPROVAL", "WARNING_LETTER", "LICENSE_GRANTED", "LICENSE_REVOKED", "OTHER"),
-    ),
     "date_normalize": DatapointContract(
         required=False,
         null_tolerance_pct=20.0,  # most pages mention at least one date somewhere
         source_priority=("context", "markdown"),
-    ),
-    "timeseries_snapshot": DatapointContract(
-        required=False,
-        null_tolerance_pct=55.0,  # needs an explicit value or structured_data's employee count
-        source_priority=("context",),
-    ),
-    "freshness": DatapointContract(
-        required=False,
-        null_tolerance_pct=70.0,  # needs last_enriched_date, absent on a page's first-ever run
-        source_priority=("context",),
     ),
     "compliance_framework_extract": DatapointContract(
         required=False,

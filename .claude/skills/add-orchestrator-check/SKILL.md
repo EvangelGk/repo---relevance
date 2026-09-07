@@ -16,7 +16,7 @@ row:
 | Drift signal | `drift.py` | Appends to `row["drift_warnings"]`, never gates |
 
 Don't reach for a hard requirement when a soft penalty is more honest - most
-of the 17 datapoint functions are legitimately empty on real pages (see
+of the datapoint functions are legitimately empty on real pages (see
 `/review-contract`). When in doubt, a quality penalty or drift warning is
 the safer default; hard requirements should be rare and deliberate.
 

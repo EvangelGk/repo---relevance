@@ -3,7 +3,7 @@ contracts.DATAPOINT_CONTRACTS.
 
 pandera's Column-based DataFrameSchema fits flat/scalar checks cleanly - is
 domain_normalize a plausible domain string, is company_entity_resolve's
-company_id non-empty, are business_model's/regulatory_event_classify's enum
+company_id non-empty, are business_model's enum
 sub-fields in their allowed set - but it doesn't fit the nested dict/list
 fields Firecrawl actually returns (social_links_extract is a dict of six
 optional URLs, careers_page_parse is a list of role dicts): a pandera Column
@@ -65,13 +65,6 @@ def _business_model_enums_ok(value: Any) -> bool:
     return True
 
 
-def _regulatory_enum_ok(value: Any) -> bool:
-    if value is None:
-        return True
-    allowed = DATAPOINT_CONTRACTS["regulatory_event_classify"].enum_values
-    return value in allowed
-
-
 # No dtype is declared on any Column below (on purpose): the row dict's
 # values can be plain Python str, dict, or None in the same column across
 # different pages, and pandas 3's default string dtype inference (a bare
@@ -89,9 +82,6 @@ _ROW_SCHEMA = DataFrameSchema(
         ),
         "business_model": Column(
             checks=Check(lambda s: s.map(_business_model_enums_ok)), nullable=True, required=False
-        ),
-        "regulatory_event_classify": Column(
-            checks=Check(lambda s: s.map(_regulatory_enum_ok)), nullable=True, required=False
         ),
     },
     strict=False,
@@ -142,10 +132,10 @@ def _contains_placeholder_string(value: Any) -> bool:
 
 def _check_no_placeholder_strings(row: dict) -> List[str]:
     """An extractor should report "nothing found" as None/[]/{} (the
-    Firecrawl._collapse_if_blank convention every one of the 17 datapoint
-    functions already follows) - never as a literal placeholder string.
-    Scoped to the 17 contracted datapoint fields only, so metadata columns
-    like raw_markdown_input/run_timestamp/crawl_issue can't false-positive
+    Firecrawl._collapse_if_blank convention every datapoint function
+    already follows) - never as a literal placeholder string.
+    Scoped to DATAPOINT_CONTRACTS' contracted fields only, so metadata
+    columns like raw_markdown_input/run_timestamp/crawl_issue can't false-positive
     (crawl_issue's own value is legitimately the word "none")."""
     violations = []
     for name in DATAPOINT_CONTRACTS:

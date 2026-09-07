@@ -10,11 +10,13 @@ output is already in `context`:
   English) - EUR is deliberately treated as compatible with most European
   languages plus English, since an English-only site pricing in EUR is a
   normal European B2B SaaS pattern, not a data-quality issue.
-- company_name_conflict: legal_entity_extract's footer legal name,
-  structured_data_extract's JSON-LD org name, and an explicit
-  company_name override disagree once legal suffixes (Inc/LLC/GmbH/...)
-  are stripped - e.g. brand "Meta" vs legal "Meta Platforms, Inc." should
-  flag; brand "Stripe" vs legal "Stripe, Inc." should not.
+- company_name_conflict: legal_entity_extract's footer legal name and an
+  explicit company_name override disagree once legal suffixes
+  (Inc/LLC/GmbH/...) are stripped - e.g. brand "Meta" vs legal "Meta
+  Platforms, Inc." should flag; brand "Stripe" vs legal "Stripe, Inc."
+  should not. (structured_data_extract used to be a third candidate here -
+  removed 2026-09-08, since cleaned markdown never preserves the JSON-LD
+  it needed.)
 """
 import re
 
@@ -71,7 +73,6 @@ class ConflictCheck(DataPointExtractor):
     def _check_company_name(context: dict):
         candidates = {
             "legal_entity_extract": (context.get("legal_entity_extract") or {}).get("legal_name"),
-            "structured_data_extract": (context.get("structured_data_extract") or {}).get("name"),
             "context_override": context.get("company_name"),
         }
         named = {source: name for source, name in candidates.items() if name}

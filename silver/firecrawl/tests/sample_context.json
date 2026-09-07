@@ -1,4 +1,5 @@
 {
+    "source_url": "https://www.acme.com",
     "detected_tools": ["HubSpot", "Google Analytics", "Segment"],
     "current_year": 2026,
     "raw_date": "2020-01-01"

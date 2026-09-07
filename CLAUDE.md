@@ -22,7 +22,7 @@ repo root/
       base.py                     - DataPointExtractor / REGISTRY / DataPointResult
       firecrawl.py                - Firecrawl.run_all() orchestrates all registered extractors
       _utils.py                   - shared markdown-parsing regex helpers
-      datapoints/                 - one file per extractor, 18 total (17 real + conflict_check)
+      datapoints/                 - one file per extractor (see DATAPOINT_CONTRACTS for the current count + conflict_check)
       tests/                      - pytest + fixtures (sample_input.md/.html, sample_context.json)
     silver_orchestrator/          - the Silver-layer quality gate in front of Firecrawl
       contracts.py                - DatapointContract dataclasses, DATAPOINT_CONTRACTS (source of truth)
@@ -43,7 +43,7 @@ reports what happened - it never decides pass/fail and never skips itself.
 - `row`: one key per extractor (`raw_markdown_input`, `run_timestamp`, plus
   all 18 extractor outputs) - the flat shape that goes into a CSV.
   `run_all_as_dataframe()` uses only this half.
-- `function_report`: for each of the **17 datapoint functions** (excludes
+- `function_report`: for each **datapoint function in DATAPOINT_CONTRACTS** (excludes
   `conflict_check`, which is a QA cross-check pass, not a datapoint) -
   `{"ran": bool, "is_empty": bool, "source": str | None}`.
 
@@ -58,7 +58,7 @@ empty) - see `base.py`'s docstring.
 `SilverOrchestrator.process_page()`:
 1. Runs `is_company_profile()` (a heuristic gate - lottery/listicle
    language rejection, lives here, not in Firecrawl). If it fails, Firecrawl
-   never runs at all - a stub row is returned instead (all 17 datapoint keys
+   never runs at all - a stub row is returned instead (every datapoint key
    `None`, `is_valid_row=False`, `quality_score=0.0`).
 2. Otherwise calls `firecrawl.run_all()`, validates the row via
    `schema_gate.evaluate_row()`, scores it via
@@ -73,7 +73,7 @@ empty) - see `base.py`'s docstring.
 `contracts.DATAPOINT_CONTRACTS` is the single source of truth:
 `required=True` only for `domain_normalize` and `company_entity_resolve`'s
 `company_id` sub-field (the two join-key-critical fields) - everything else
-is `required=False` by design. Most of the 17 functions are legitimately
+is `required=False` by design. Most functions are legitimately
 empty on plenty of real pages; don't "fix" that by making them required.
 
 ## Environment
@@ -159,8 +159,8 @@ shared monorepo those governance rules bind).
   ("ok"/"partial"/"unusable"), `content_integrity`, and `schema_version`
   ("1.0" today - bump it if a field is ever added/removed/retyped).
 - `schema_gate._check_no_placeholder_strings` - a new hard requirement:
-  none of the 17 datapoint fields may hold a literal placeholder string
-  ("N/A", "Unknown", "null", ...) instead of `None`/`[]`/`{}`.
+  none of the contracted datapoint fields may hold a literal placeholder
+  string ("N/A", "Unknown", "null", ...) instead of `None`/`[]`/`{}`.
 - `GROUNDING_LAW.md` (new, `silver/silver_orchestrator/`) - the shared
   rule every datapoint function and both triage classifiers must follow:
   never derive a company fact from a domain, TLD, or detected page
@@ -175,3 +175,55 @@ shared monorepo those governance rules bind).
   `["not_a_company_profile"]` - lottery content is caught by the new,
   earlier, more specific `classify_crawl_issue` ladder before
   `is_company_profile` ever runs.
+
+## 2026-09-08 addition: datapoint pruning + domain_normalize/tech_stack/careers fixes
+
+Prompted by real usage showing most-of-18 datapoint functions coming back
+empty most of the time. Not every "usually empty" case has the same root
+cause - some were genuine bugs, some were dead code, some were niche
+signals correctly empty by design. Each got a different treatment instead
+of a blanket "delete anything with a low hit rate":
+
+- **Removed entirely** (structurally can't work, or too niche to matter):
+  `structured_data_extract` (needed JSON-LD from a `<script>` tag - cleaned
+  markdown never preserves this), `regulatory_event_classify` (near-zero
+  hit rate outside regulated industries), `timeseries_snapshot` and
+  `freshness` (both depended on inputs - `structured_data_extract`'s
+  employee count, a re-enrichment history DB - that don't exist in this
+  pipeline). `_utils.py`'s now-orphaned `extract_json_ld`,
+  `JSON_LD_BLOCK_RE`, `JSON_FENCE_RE`, `HREFLANG_RE`, `LANG_ATTR_RE` were
+  removed with them. `conflict_check.py`'s company-name check dropped its
+  now-defunct `structured_data_extract` candidate.
+- **Simplified** (kept the working half, cut the dead half):
+  `site_locale_detect` no longer attempts `<html lang>`/`hreflang`
+  detection (same "cleaned markdown doesn't preserve this" problem) -
+  its markdown language-name/parenthetical-code scan is now the only path.
+- **Fixed a real correctness bug, not just an emptiness one**:
+  `domain_normalize` used to fall back to "the first link found anywhere
+  on the page" when `context["source_url"]` wasn't given - this could
+  confidently return a *wrong* domain (e.g. a footer's LinkedIn link),
+  not just an empty one. It's now context["source_url"]-only;
+  `company_entity_resolve` inherits the fix since it reads
+  `domain_normalize`'s output. `source_priority` for both dropped their
+  `"markdown"` entry accordingly.
+- **Broadened for actual usefulness**: `tech_stack_normalize`'s vendor
+  catalog grew from 18 names across 5 categories to ~75 across 13 -
+  `mentioned_technologies` (markdown-only scanning) is the only signal
+  this pipeline can produce today, since nothing feeds
+  `context["detected_tools"]` yet, so its catalog size *is* its hit rate.
+- **Rewrote for realistic input, not a hypothetical one**:
+  `careers_page_parse`'s old strict format
+  (`"TITLE — DEPT — LOCATION — Posted YYYY-MM-DD"`) almost never appears
+  verbatim on a real scraped careers page, so it returned `[]` even ON
+  genuine careers pages. It now tries that strict format first, then
+  falls back to a looser per-bullet/heading parser (title required,
+  department/location/posted_date extracted opportunistically and left
+  `None` rather than failing the whole line) - scoped to a
+  careers-shaped section only (broadened beyond "## Careers" to also
+  match Jobs/Open Positions/Open Roles/We're Hiring/Join Us), never the
+  whole page, so it can't misread an unrelated bullet list as job postings.
+- Net effect: 18 registered extractors (17 + `company_description_extract`)
+  down to 15 (14 real datapoints + `conflict_check`). Any hardcoded "17" or
+  "18" count you see elsewhere in old comments is stale - the count is
+  meant to be read off `contracts.DATAPOINT_CONTRACTS`, not memorized,
+  since it will keep changing.

@@ -4,17 +4,10 @@ Cleaned Firecrawl markdown rarely keeps a full DOM, so these are regex/heuristic
 helpers rather than a real HTML parser - each extractor degrades gracefully
 (returns None/empty) when the signal it needs didn't survive the clean.
 """
-import json
 import re
 
 LINK_RE = re.compile(r"\[([^\]]*)\]\((https?://[^\s)]+)\)")
 BARE_URL_RE = re.compile(r"https?://[^\s)\]}>\"']+")
-JSON_LD_BLOCK_RE = re.compile(
-    r"<script[^>]+application/ld\+json[^>]*>(.*?)</script>", re.DOTALL | re.IGNORECASE
-)
-JSON_FENCE_RE = re.compile(r"```json\s*(.*?)```", re.DOTALL | re.IGNORECASE)
-LANG_ATTR_RE = re.compile(r'lang(?:uage)?=["\']([a-zA-Z-]{2,10})["\']')
-HREFLANG_RE = re.compile(r'hreflang=["\']([a-zA-Z-]{2,10})["\']')
 PRICE_RE = re.compile(r"(?:[$€£¥]|USD|EUR|GBP)\s?\d[\d,.]*")
 
 
@@ -59,21 +52,3 @@ def find_section(markdown: str, heading_keywords, max_chars: int = 4000) -> str:
                     break
             return markdown[start:end][:max_chars]
     return ""
-
-
-def extract_json_ld(markdown: str):
-    """Return parsed JSON-LD dicts found as <script> blocks or fenced
-    ```json blocks (Firecrawl sometimes preserves either)."""
-    blocks = JSON_LD_BLOCK_RE.findall(markdown) + JSON_FENCE_RE.findall(markdown)
-    parsed = []
-    for raw in blocks:
-        raw = raw.strip()
-        try:
-            data = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if isinstance(data, list):
-            parsed.extend(d for d in data if isinstance(d, dict))
-        elif isinstance(data, dict):
-            parsed.append(data)
-    return [d for d in parsed if "@type" in d or "@context" in d]

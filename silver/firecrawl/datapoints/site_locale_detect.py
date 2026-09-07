@@ -1,18 +1,20 @@
-"""function_site_locale_detect(page language / hreflang tags) ->
-language_code: array
+"""function_site_locale_detect(page language mentions) -> language_code: array
 
 Another corroborating input for a location signal, and a data-quality
 flag when it conflicts with claimed markets (see conflict_check.py, which
-cross-checks this against pricing_locale_extract's currency). Cleaned
-markdown usually drops <html lang> / <link hreflang>, so this falls back
-to a canonical language-name-to-code table plus a scan for parenthetical
-2-letter codes (e.g. "English (EN)"), returned in the order they first
-appear on the page.
+cross-checks this against pricing_locale_extract's currency).
+
+HTML-attribute detection (<html lang>, <link hreflang>) was removed
+2026-09-08: cleaned markdown never preserves those attributes, so that
+path was structurally dead against real input - it only ever fired on a
+raw-HTML test fixture, never on a genuine Firecrawl scrape. What's left is
+the part that actually works on markdown text: a canonical
+language-name-to-code table plus a scan for parenthetical 2-letter codes
+(e.g. "English (EN)"), returned in the order they first appear on the page.
 """
 import re
 
 from ..base import DataPointExtractor
-from .._utils import HREFLANG_RE, LANG_ATTR_RE
 
 _LANGUAGE_NAMES = {
     "english": "en",
@@ -44,12 +46,6 @@ class SiteLocaleDetect(DataPointExtractor):
     name = "site_locale_detect"
 
     def extract(self, markdown: str, context: dict):
-        tags = {m.lower() for m in LANG_ATTR_RE.findall(markdown)}
-        tags |= {m.lower() for m in HREFLANG_RE.findall(markdown)}
-        if tags:
-            self._last_source = "hreflang"
-            return sorted(tags)
-
         hits = [(m.start(), _LANGUAGE_NAMES[m.group(1).lower()]) for m in _NAME_RE.finditer(markdown)]
         for m in _PAREN_CODE_RE.finditer(markdown):
             code = m.group(1).lower()
@@ -63,5 +59,5 @@ class SiteLocaleDetect(DataPointExtractor):
             if code not in seen:
                 seen.add(code)
                 ordered_codes.append(code)
-        self._last_source = "markdown_fallback" if ordered_codes else None
+        self._last_source = "markdown" if ordered_codes else None
         return ordered_codes

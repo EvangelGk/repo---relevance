@@ -142,7 +142,9 @@ def test_process_page_rejects_directory_page(tmp_path):
 
 def test_process_page_flags_placeholder_content_independent_of_validity(tmp_path):
     orchestrator = _make_orchestrator(tmp_path)
-    row = orchestrator.process_page(PLACEHOLDER_TEMPLATE_SNIPPET)
+    row = orchestrator.process_page(
+        PLACEHOLDER_TEMPLATE_SNIPPET, {"source_url": "https://acme-example.com"}
+    )
 
     # The point of content_integrity: a row can pass every schema_gate
     # hard requirement and still be flagged as demo/theme content -

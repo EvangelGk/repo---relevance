@@ -14,7 +14,7 @@ Today that's only `domain_normalize` and `company_entity_resolve`
 (specifically its `company_id` sub-field - see `schema_gate.py`'s
 `_has_company_id`, which checks that key, not the whole dict). Don't flip a
 function to required just because it's useful or usually populated - most
-of the 17 datapoint functions are *legitimately* empty on plenty of real
+of the datapoint functions are *legitimately* empty on plenty of real
 pages, and marking one required turns a normal empty result into a
 rejected row.
 

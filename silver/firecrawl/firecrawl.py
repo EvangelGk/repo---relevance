@@ -25,10 +25,12 @@ import pandas as pd
 from .base import REGISTRY, DataPointExtractor, DataPointResult
 from ._utils import extract_footer, extract_links
 
-# The 17 datapoint functions whose emptiness/source get reported in
+# The datapoint functions whose emptiness/source get reported in
 # run_all()'s function_report. Extractors outside this set are QA/cross-check
 # passes (currently just conflict_check) that emit extra_columns rather than
 # a datapoint of their own, so they're not part of the reported contract.
+# Count on purpose not hardcoded here - see contracts.DATAPOINT_CONTRACTS
+# for the current list, which changes as datapoints are added/retired.
 _QA_ONLY_EXTRACTORS = {"conflict_check"}
 
 
@@ -75,7 +77,7 @@ class Firecrawl:
         `row` has one key per extractor (plus raw_markdown_input and
         run_timestamp) - the same flat shape run_all() always returned, and
         the only half run_all_as_dataframe() uses. `function_report` has one
-        entry per one of the 17 datapoint functions -
+        entry per datapoint function (see contracts.DATAPOINT_CONTRACTS) -
         {"ran": bool, "is_empty": bool, "source": str | None} - for the
         orchestrator to score and gate on; it never appears in the CSV.
         """

@@ -4,8 +4,8 @@ the audit signal (quality_score, is_valid_row, rejection_reasons) up front
 and the raw markdown last.
 
 This runs everything through SilverOrchestrator rather than calling
-Firecrawl directly - Firecrawl is pure execution (runs all 17 datapoint
-functions, reports what happened) and never decides whether a page was
+Firecrawl directly - Firecrawl is pure execution (runs every registered
+datapoint function, reports what happened) and never decides whether a page was
 worth running or whether its output is good enough to trust. That decision
 (is_company_profile, schema_gate, quality_score, drift) is
 SilverOrchestrator's job, so a rejected or low-quality result is visible
@@ -43,8 +43,8 @@ def _flatten_row(row: dict) -> dict:
 
 def _reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Audit signal first, raw markdown last, everything else in between -
-    so the reviewer sees whether to trust a row before scrolling through 17
-    datapoint columns to find out."""
+    so the reviewer sees whether to trust a row before scrolling through
+    every datapoint column to find out."""
     flag_cols = [c for c in _FLAG_COLUMNS if c in df.columns]
     last_col = [_LAST_COLUMN] if _LAST_COLUMN in df.columns else []
     middle_cols = [c for c in df.columns if c not in flag_cols and c not in last_col]

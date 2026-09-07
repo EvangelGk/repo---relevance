@@ -1,7 +1,7 @@
 """SilverOrchestrator: the Silver-layer gate in front of Firecrawl.
 
-Firecrawl itself is pure execution now - it runs all 17 datapoint functions
-against whatever it's given and reports what happened, never deciding
+Firecrawl itself is pure execution now - it runs every registered datapoint
+function against whatever it's given and reports what happened, never deciding
 pass/fail or skipping itself. This module owns that decision: whether a
 page is worth running Firecrawl on at all (is_company_profile, moved here
 from firecrawl.py, plus the richer triage.classify_crawl_issue ladder in
@@ -64,7 +64,7 @@ class SilverOrchestrator:
 
     def is_company_profile(self, markdown: str) -> bool:
         """Cheap heuristic relevance gate (not ML): reject pages that are
-        clearly not a company profile before running Firecrawl's 17
+        clearly not a company profile before running Firecrawl's
         datapoint extractors against them - a lottery results page or a
         generic listicle has no business filling out a company row.
 

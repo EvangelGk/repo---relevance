@@ -1,6 +1,6 @@
 ---
 name: add-datapoint
-description: Scaffold a new Firecrawl datapoint extractor (base class subclass, self._last_source wiring, registration) plus its DatapointContract entry and a smoke test, following this repo's established 17-function pattern.
+description: Scaffold a new Firecrawl datapoint extractor (base class subclass, self._last_source wiring, registration) plus its DatapointContract entry and a smoke test, following this repo's established datapoint pattern.
 ---
 
 # Add a new Firecrawl datapoint function
@@ -12,7 +12,7 @@ Before writing code, confirm with the user (or infer from their request):
   both (context taking priority, markdown as fallback - the
   `tech_stack_normalize` / `company_entity_resolve` pattern).
 - What "empty" looks like for it (`None`? `[]`? `{}`?) and whether that's
-  actually common on real pages (most of the 17 datapoints are legitimately
+  actually common on real pages (most datapoints are legitimately
   empty often - see `/review-contract`).
 
 ## 1. Create `silver/firecrawl/datapoints/<name>.py`
@@ -122,7 +122,7 @@ new extractor's real output on real markdown and said it's good. Every
 time, regardless of how small the change looks:
 
 1. Run **only the new extractor class** in isolation (not the full
-   `Firecrawl` pipeline, so the output isn't buried among 17+ other
+   `Firecrawl` pipeline, so the output isn't buried among all the other
    columns) against at least: `silver/firecrawl/tests/sample_input.md`, a
    context-override case if the function has one, and an empty/negative
    case. A small standalone script works well:
