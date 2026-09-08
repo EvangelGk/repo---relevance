@@ -1,4 +1,6 @@
-"""Turns a Firecrawl function_report into one 0-100 quality score for a row.
+"""Turns a function_report (Firecrawl's, or any other source's - see
+orchestrator.build_function_report for how a flat single-source dict gets
+turned into this shape) into one 0-100 quality score for a row.
 
 Two penalties, both additive off a 100.0 baseline:
 - A required-but-empty function (domain_normalize, company_entity_resolve)

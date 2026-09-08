@@ -12,8 +12,13 @@ criteria, because what makes a source trustworthy differs by datapoint
 (a historical fact wants a verified registry; a live headcount number
 might instead want "most recently observed").
 
-Today exactly one field qualifies: founded_year (apify, firecrawl,
-crunchbase). The shape below scales to any number of sources without
+As of 2026-09-08, two fields qualify: company_name (apify, firecrawl) --
+wired into silver/company/connector.py -- and founded_year (apify,
+firecrawl, crunchbase), which is NOT wired anywhere: only one of its three
+named candidate sources (Firecrawl's legal_entity_extract.copyright_year)
+actually produces a value anywhere in this repo today, so it's a
+passthrough, not a real contest -- see README.md's "Open, not decided
+here" section. The shape below scales to any number of sources without
 changing -- add a 4th competing source to founded_year, or add a whole
 new multi-source field, by editing data here, never the resolver.
 """
@@ -21,6 +26,19 @@ new multi-source field, by editing data here, never the resolver.
 from silver.foreman.source_priority_resolve import PriorityRule
 
 PRIORITY_RULES: dict[str, PriorityRule] = {
+    "company_name": {
+        # Apify's LinkedIn company name is a structured field straight off
+        # the scrape; Firecrawl's candidate (company_entity_resolve's
+        # company_name, itself context["company_name"] or
+        # legal_entity_extract's footer-derived legal name) is markdown-
+        # scanned free text. Apify is the correct default winner here, the
+        # same as almost every other universal company/people field --
+        # founded_year below is the documented exception, not the rule.
+        "criteria": [
+            {"type": "static_rank", "rank": ["apify", "firecrawl"]},
+        ],
+        "normalize": "lower_strip",
+    },
     "founded_year": {
         # Single criterion is enough here: a fixed reliability ranking.
         #   crunchbase -- investor/registry-diligenced, closest to a legal fact.

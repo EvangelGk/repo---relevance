@@ -23,17 +23,19 @@ restores it: `function_source_priority_resolve` now takes an arbitrary
 list of candidates - 2, 3, or 15 - through one unchanged call shape,
 proven in `test_foreman.py` at 2-, 3-, 5-, and 15-source scale.
 
-**Current status: standalone, not wired in.** This drop adds only the
-package itself (`source_priority_resolve.py`, `priority_rules.py`,
-`test_foreman.py`, this README) under `silver/foreman/`. `company/connector.py`
-still does pure static tagging for every field, `founded_year` isn't
-assembled or exposed anywhere yet, and neither `connector.py`'s docstring
-nor `apify/company/secondary/README.md` has been updated to reflect that
-a foreman exists again - both still correctly describe the pre-this-drop
-state. Wiring this into `connector.py`, adding a real `founded_year`
-candidate to `apify/company/universal/extract.py`, and giving CrunchBase
-an actual source folder are separate, later decisions, not part of this
-change.
+**Current status (updated 2026-09-08): wired in for `company_name`.**
+`silver/company/connector.py`'s `assemble_company_row` now calls
+`function_source_priority_resolve` to resolve `name`/`name_source` between
+Apify's `name` and Firecrawl's `company_entity_resolve.company_name`,
+using `PRIORITY_RULES["company_name"]`, and exposes a `name_conflict` flag
+on the row. Every other company field (`industry`, `headcount`,
+`location`, `linkedin_url`) still only has one candidate source and stays
+pure static tagging, unchanged. `founded_year` remains unwired -
+`priority_rules.py` documents why: only one of its three named candidate
+sources actually produces a value anywhere in this repo today, so there's
+still nothing to reconcile there. Adding a real `founded_year` candidate
+to `apify/company/universal/extract.py`, and giving CrunchBase an actual
+source folder, are still separate, later decisions.
 
 ## API
 

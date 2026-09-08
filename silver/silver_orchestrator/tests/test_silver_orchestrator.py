@@ -9,10 +9,14 @@ from pathlib import Path
 
 from silver.firecrawl import Firecrawl
 from silver.silver_orchestrator import schema_gate
-from silver.silver_orchestrator.contracts import DATAPOINT_CONTRACTS
+from silver.silver_orchestrator.contracts import APIFY_COMPANY_CONTRACTS, DATAPOINT_CONTRACTS
 from silver.silver_orchestrator.dead_letter import DeadLetterQueue
 from silver.silver_orchestrator.drift import DriftTracker
-from silver.silver_orchestrator.orchestrator import SilverOrchestrator
+from silver.silver_orchestrator.orchestrator import (
+    SilverOrchestrator,
+    build_function_report,
+    evaluate_record,
+)
 
 FIRECRAWL_FIXTURES_DIR = Path(__file__).parent.parent.parent / "firecrawl" / "tests"
 SAMPLE_MD = (FIRECRAWL_FIXTURES_DIR / "sample_input.md").read_text(encoding="utf-8")
@@ -93,7 +97,8 @@ def test_process_page_rejects_lottery_content(tmp_path):
     assert len(lines) == 1
     record = json.loads(lines[0])
     assert record["reasons"] == ["non_company_page"]
-    assert record["raw_markdown_input"] == LOTTERY_SNIPPET
+    assert record["raw_input"] == LOTTERY_SNIPPET
+    assert record["source"] == "firecrawl"
 
 
 def test_process_page_rejects_snippet_missing_domain(tmp_path):
@@ -180,3 +185,77 @@ def test_schema_gate_flags_placeholder_strings():
     violations = schema_gate.evaluate_row(row)
 
     assert any("site_locale_detect" in v and "placeholder" in v for v in violations)
+
+
+def test_build_function_report_flags_blank_fields_as_empty():
+    row = {"name": "Acme Corp", "industry": None, "headcount": 340, "location": None, "linkedin_url": ""}
+
+    report = build_function_report(row, source="apify")
+
+    assert report["name"] == {"ran": True, "is_empty": False, "source": "apify"}
+    assert report["industry"] == {"ran": True, "is_empty": True, "source": "apify"}
+    assert report["location"]["is_empty"] is True
+    assert report["linkedin_url"]["is_empty"] is True
+
+
+def test_evaluate_record_scores_and_gates_an_apify_company_row(tmp_path):
+    row = {
+        "name": "Acme Corp",
+        "industry": "Logistics Software",
+        "headcount": 340,
+        "location": "Austin, TX",
+        "linkedin_url": "https://linkedin.com/company/acme-corp",
+    }
+    function_report = build_function_report(row, source="apify")
+    dead_letter = DeadLetterQueue(path=str(tmp_path / "dead_letter.jsonl"))
+    drift = DriftTracker(path=str(tmp_path / "quality_history.jsonl"))
+
+    result = evaluate_record(
+        row, function_report, APIFY_COMPANY_CONTRACTS, "apify_company", dead_letter=dead_letter, drift=drift
+    )
+
+    assert result["is_valid_row"] is True
+    assert result["quality_score"] == 100.0
+    assert result["rejection_reasons"] == []
+    assert result["drift_warnings"] == []
+    assert result["schema_version"] == "1.0"
+    assert result["name"] == "Acme Corp"
+    assert not (tmp_path / "dead_letter.jsonl").exists()
+
+
+def test_evaluate_record_dead_letters_placeholder_strings(tmp_path):
+    row = {"name": "Acme Corp", "industry": "Unknown", "headcount": None, "location": None, "linkedin_url": None}
+    function_report = build_function_report(row, source="apify")
+    dead_letter = DeadLetterQueue(path=str(tmp_path / "dead_letter.jsonl"))
+    drift = DriftTracker(path=str(tmp_path / "quality_history.jsonl"))
+
+    result = evaluate_record(
+        row, function_report, APIFY_COMPANY_CONTRACTS, "apify_company", dead_letter=dead_letter, drift=drift
+    )
+
+    assert result["is_valid_row"] is False
+    assert any("industry" in reason and "placeholder" in reason for reason in result["rejection_reasons"])
+
+    record = json.loads((tmp_path / "dead_letter.jsonl").read_text(encoding="utf-8").strip())
+    assert record["source"] == "apify_company"
+    assert json.loads(record["raw_input"])["name"] == "Acme Corp"
+
+
+def test_drift_namespace_prevents_cross_source_collision(tmp_path):
+    """Same function name ("location"), two sources writing to the same
+    shared JSONL file: without namespacing, this is exactly the collision
+    scenario found in review - an Apify pipeline and a Firecrawl pipeline
+    sharing a field name would interleave in each other's rolling-window
+    history. record_run/is_drifting's namespace param keys them apart."""
+    drift = DriftTracker(path=str(tmp_path / "quality_history.jsonl"))
+
+    drift.record_run("location", False)  # bare/firecrawl namespace
+    drift.record_run("location", True, namespace="apify_company")  # separate namespace, same function name
+
+    bare_records = drift._read_records("location")
+    namespaced_records = drift._read_records("location", namespace="apify_company")
+
+    assert len(bare_records) == 1 and bare_records[0]["is_empty"] is False
+    assert len(namespaced_records) == 1 and namespaced_records[0]["is_empty"] is True
+    assert bare_records[0]["function_name"] == "location"
+    assert namespaced_records[0]["function_name"] == "apify_company:location"

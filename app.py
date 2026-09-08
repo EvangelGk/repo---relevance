@@ -248,10 +248,11 @@ def _run_firecrawl_audit_tab():
 
 def _run_unified_preview_tab():
     st.warning(
-        "Preview only - silver/company/ and silver/people/ are additive scaffolding from the "
-        "2026-09-08 restructure, not wired into any production pipeline yet. This tab runs the "
-        "real connector code against manually entered stand-in Apify/Prospeo fields, since "
-        "silver/apify/ and silver/prospeo/ have no live scraper wired in yet."
+        "silver/company/ and silver/people/ connectors now gate the Apify half through the same "
+        "contracts/quality-score machinery as the Firecrawl Audit tab (silver_orchestrator's "
+        "2026-09-08 generalization), and silver/foreman/ resolves the company name when Apify and "
+        "Firecrawl disagree - but this tab still runs against manually entered stand-in Apify/"
+        "Prospeo fields, since silver/apify/ and silver/prospeo/ have no live scraper wired in yet."
     )
 
     company_tab, people_tab = st.tabs(["Company row", "Person row"])
@@ -308,6 +309,15 @@ def _run_unified_preview_tab():
         if st.button("Assemble company row", key="v2_assemble_company", disabled=not markdown_input.strip()):
             firecrawl_row = Firecrawl().run_all(markdown_input, source_url=source_url)["row"]
             result = assemble_company_row(apify_company, firecrawl_row, source_link=source_link or None)
+
+            score_col, conflict_col = st.columns(2)
+            score_col.markdown(
+                f'<span style="color:{_quality_color(result["apify_quality_score"])};font-weight:700;">'
+                f'Apify quality: {result["apify_quality_score"]:.0f}/100</span>',
+                unsafe_allow_html=True,
+            )
+            if result["name_conflict"]:
+                conflict_col.warning("name_conflict: apify vs firecrawl disagreed, apify won by rank")
             st.json(result)
 
     with people_tab:
@@ -351,6 +361,12 @@ def _run_unified_preview_tab():
 
         if st.button("Assemble person row", key="v2_assemble_person"):
             result = assemble_person_row(apify_person, prospeo_person, source_link=people_source_link or None)
+
+            st.markdown(
+                f'<span style="color:{_quality_color(result["apify_quality_score"])};font-weight:700;">'
+                f'Apify quality: {result["apify_quality_score"]:.0f}/100</span>',
+                unsafe_allow_html=True,
+            )
             st.json(result)
 
 

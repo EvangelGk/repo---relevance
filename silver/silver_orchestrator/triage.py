@@ -19,6 +19,16 @@ Runs BEFORE Firecrawl.run_all() - same layer as the pre-existing
 is_company_profile check in orchestrator.py, one step earlier than
 schema_gate.py (which validates what a datapoint function actually
 returned, not whether the page was worth running at all).
+
+Scoped to Firecrawl/crawled-markdown input on purpose, and deliberately
+NOT extended to apify/company or apify/people rows (2026-09-08's
+orchestrator generalization pass): every category here - bot walls,
+cookie banners, parked-domain notices, thin-prose detection - is a signal
+about whether a *scraped webpage* is usable. An Apify/Prospeo record is
+already a structured JSON object with no such "was this page even
+fetchable" question to ask; orchestrator.evaluate_record() (the
+record-shaped sibling to process_page()) skips this stage entirely rather
+than forcing a markdown-flavored gate onto data that was never a page.
 """
 import re
 from typing import Tuple

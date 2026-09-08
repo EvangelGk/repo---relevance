@@ -39,11 +39,30 @@ def test_assemble_from_live_firecrawl_output():
     assert row["description_source"] == "firecrawl"
     assert row["company_id"] is not None
     assert row["source_link"] == "batch-2026-09-08"
+    assert row["name_conflict"] is False
+    assert row["apify_is_valid_row"] is True
+    assert row["apify_quality_score"] == 100.0
 
 
 def test_missing_inputs_dont_crash():
     row = assemble_company_row(None, None, None)
     assert row["name"] is None
-    assert row["name_source"] == "apify"
+    # No source had a value, so nothing won the resolution - matches the
+    # "source is None when nothing was found" convention every Firecrawl
+    # extractor already follows, unlike the pre-foreman static "apify" tag.
+    assert row["name_source"] is None
     assert row["domain"] is None
     assert row["source_link"] is None
+
+
+def test_name_conflict_flagged_when_apify_and_firecrawl_disagree():
+    firecrawl_row = {"company_entity_resolve": {"company_name": "Beta Industries"}}
+    apify_company = {"name": "Acme Corp"}
+
+    row = assemble_company_row(apify_company, firecrawl_row, source_link=None)
+
+    # Apify wins by rank even in disagreement, but the disagreement itself
+    # must still be visible to a reviewer.
+    assert row["name"] == "Acme Corp"
+    assert row["name_source"] == "apify"
+    assert row["name_conflict"] is True

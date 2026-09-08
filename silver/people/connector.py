@@ -3,11 +3,15 @@
 The `people/` connector: assembles one person row from Apify (universal
 LinkedIn fields) and Prospeo (email + whatever else Prospeo's export
 happens to carry). Today no person field has more than one candidate
-source, so - like `company/connector.py` - this is pure static tagging,
-not a merge; per the source-differentiator convention, if a field ever
-gains a second candidate source, resolve with a foreman-style priority
-function first, then tag the winner - no such function exists in this
-repo yet, so that path isn't wired here.
+source, so - like `company/connector.py` used to be - this is pure static
+tagging, not a merge; per the source-differentiator convention, if a field
+ever gains a second candidate source, resolve it with the foreman
+(`silver/foreman/`, wired in 2026-09-08 - see
+`company/connector.py`'s `name` field for a worked example) before tagging
+the winner. No people-side field qualifies yet (confirmed 2026-09-08:
+`seniority`/`employed_company` are Apify-derived-only, not multi-source),
+so that path isn't wired here - not because no mechanism exists, but
+because there's nothing real to resolve.
 
 **Fixed 2026-09-08**: `seniority` and `employed_company` were previously
 read as flat keys straight off `apify_person`, which isn't real - Apify
@@ -41,11 +45,25 @@ Inputs:
     per-entry shape). When supplied, drives `employed_company` derivation.
   - `source_link`: stamped from ingestion/batch context, passed through
     with no companion tag - it *is* the provenance value.
+  - `dead_letter`/`drift`: optional, forwarded to
+    `silver_orchestrator.orchestrator.evaluate_record` (same
+    default-fresh-instance convention `SilverOrchestrator`/
+    `company/connector.py` already use).
+
+Output also carries `apify_quality_score`/`apify_is_valid_row`/
+`apify_rejection_reasons`/`apify_drift_warnings` (added 2026-09-08) - the
+Apify half's own extraction quality, gated via
+`silver_orchestrator.contracts.APIFY_PEOPLE_CONTRACTS` against the raw
+`apify_person` dict, independent of the Prospeo passthrough fields below.
 """
 from typing import Any, Dict, List, Optional
 
 from silver.apify.people.secondary.datapoints.experience_array_resolve import function_experience_array_resolve
 from silver.apify.people.secondary.datapoints.seniority import function_seniority
+from silver.silver_orchestrator.contracts import APIFY_PEOPLE_CONTRACTS
+from silver.silver_orchestrator.dead_letter import DeadLetterQueue
+from silver.silver_orchestrator.drift import DriftTracker
+from silver.silver_orchestrator.orchestrator import build_function_report, evaluate_record
 
 _APIFY_UNIVERSAL_FIELDS = (
     "linkedin_url", "full_name", "job_title", "country", "linkedin_about",
@@ -71,9 +89,20 @@ def assemble_person_row(
     prospeo_person: Optional[Dict[str, Any]],
     raw_experience: Optional[List[Dict[str, Any]]] = None,
     source_link: Optional[str] = None,
+    dead_letter: Optional[DeadLetterQueue] = None,
+    drift: Optional[DriftTracker] = None,
 ) -> Dict[str, Any]:
     apify_person = apify_person or {}
     prospeo_person = prospeo_person or {}
+
+    apify_gate = evaluate_record(
+        apify_person,
+        build_function_report(apify_person, source="apify"),
+        APIFY_PEOPLE_CONTRACTS,
+        "apify_people",
+        dead_letter=dead_letter,
+        drift=drift,
+    )
 
     row: Dict[str, Any] = {}
     for field in _APIFY_UNIVERSAL_FIELDS:
@@ -94,4 +123,8 @@ def assemble_person_row(
         row.setdefault(f"{field}_source", "prospeo")
 
     row["source_link"] = source_link
+    row["apify_quality_score"] = apify_gate["quality_score"]
+    row["apify_is_valid_row"] = apify_gate["is_valid_row"]
+    row["apify_rejection_reasons"] = apify_gate["rejection_reasons"]
+    row["apify_drift_warnings"] = apify_gate["drift_warnings"]
     return row

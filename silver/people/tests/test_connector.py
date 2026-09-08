@@ -50,3 +50,27 @@ def test_employed_company_derived_from_raw_experience():
 def test_employed_company_falls_back_to_flat_key_without_raw_experience():
     row = assemble_person_row({"full_name": "Jane Doe", "employed_company": "Acme Corp"}, None)
     assert row["employed_company"] == "Acme Corp"
+
+
+def test_apify_quality_gate_fields_present():
+    apify_person = {
+        "linkedin_url": "https://linkedin.com/in/janedoe",
+        "full_name": "Jane Doe",
+        "job_title": "VP of Engineering",
+        "country": "United States",
+        "linkedin_about": "## About\n\nBuilding at Acme Corp.",
+    }
+
+    row = assemble_person_row(apify_person, None)
+
+    assert row["apify_is_valid_row"] is True
+    assert row["apify_quality_score"] == 100.0
+    assert row["apify_rejection_reasons"] == []
+    assert row["apify_drift_warnings"] == []
+
+
+def test_apify_quality_gate_flags_placeholder_string():
+    row = assemble_person_row({"full_name": "Jane Doe", "country": "Unknown"}, None)
+
+    assert row["apify_is_valid_row"] is False
+    assert any("country" in reason and "placeholder" in reason for reason in row["apify_rejection_reasons"])

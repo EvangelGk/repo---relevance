@@ -22,6 +22,16 @@ prompt (Cowork Project schema-inspiration proposal). content_integrity is
 forced to "unknown" whenever crawl_status is "unusable", mirroring that
 source prompt's rule that a failed/rejected fetch carries no content
 signal worth reporting.
+
+Generalized 2026-09-08 to cover the rest of silver/, not just Firecrawl:
+`build_function_report`/`evaluate_record` below are the module's other
+half, used by silver/company/connector.py and silver/people/connector.py
+to gate an Apify-extracted row through the same schema_gate/quality_score/
+drift machinery process_page() uses - without the crawl_issue/
+is_company_profile/content_integrity concepts, which are specific to "was
+this a usable scraped webpage" and don't apply to an already-structured
+record. See triage.py's module docstring for why that stage is skipped
+rather than adapted.
 """
 import re
 from datetime import datetime, timezone
@@ -52,11 +62,17 @@ _SCHEMA_VERSION = "1.0"
 class SilverOrchestrator:
     def __init__(
         self,
-        firecrawl,
+        firecrawl: Optional[Any] = None,
         contracts: Dict[str, DatapointContract] = DATAPOINT_CONTRACTS,
         dead_letter: Optional[DeadLetterQueue] = None,
         drift: Optional[DriftTracker] = None,
     ):
+        # firecrawl is optional (added 2026-09-08): process_page()/
+        # process_batch() still need one, but evaluate_record() below
+        # doesn't touch self.firecrawl at all, so a caller that only wants
+        # the generic record-gating path (e.g. a future non-Firecrawl
+        # pipeline) isn't forced to construct a Firecrawl instance just to
+        # get one.
         self.firecrawl = firecrawl
         self.contracts = contracts
         self.dead_letter = dead_letter if dead_letter is not None else DeadLetterQueue()
@@ -113,7 +129,7 @@ class SilverOrchestrator:
         crawl_issue: str,
         crawl_status: str,
     ) -> dict:
-        self.dead_letter.append(markdown, reasons)
+        self.dead_letter.append(markdown, reasons, source="firecrawl")
         row = self._stub_row(markdown, run_timestamp)
         row["is_valid_row"] = False
         row["quality_score"] = 0.0
@@ -126,6 +142,11 @@ class SilverOrchestrator:
         return row
 
     def process_page(self, markdown: str, context: Optional[dict] = None) -> dict:
+        if self.firecrawl is None:
+            raise ValueError(
+                "SilverOrchestrator was constructed without a firecrawl instance - "
+                "process_page()/process_batch() need one; evaluate_record() doesn't."
+            )
         markdown = markdown or ""
         run_timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -144,7 +165,7 @@ class SilverOrchestrator:
         row = result["row"]
         function_report = result["function_report"]
 
-        violations = schema_gate.evaluate_row(row)
+        violations = schema_gate.evaluate_row(row, contracts=self.contracts)
         score = quality_score.compute_quality_score(function_report, self.contracts)
 
         row["drift_warnings"] = []
@@ -159,7 +180,7 @@ class SilverOrchestrator:
         row["schema_version"] = _SCHEMA_VERSION
 
         if violations:
-            self.dead_letter.append(markdown, violations)
+            self.dead_letter.append(markdown, violations, source="firecrawl")
             row["is_valid_row"] = False
             row["quality_score"] = score
             row["rejection_reasons"] = violations
@@ -187,3 +208,70 @@ class SilverOrchestrator:
         df = self.process_batch(inputs)
         df.to_csv(out_path, index=False)
         return df
+
+
+def _is_blank(value: Any) -> bool:
+    """The same "nothing found" convention GROUNDING_LAW.md rule 4 and
+    Firecrawl._collapse_if_blank already use - None/[]/{}/""."""
+    return value is None or value in ([], {}, "")
+
+
+def build_function_report(row: Dict[str, Any], source: str) -> Dict[str, dict]:
+    """Turn a flat single-source extractor output - e.g.
+    apify/company/universal/extract.py's extract_company_universal_fields()
+    - into the {name: {ran, is_empty, source}} shape Firecrawl.run_all()
+    already produces, so schema_gate/quality_score/drift can treat any
+    flat-dict source uniformly via evaluate_record() below. Every entry
+    gets ran=True: nothing in a flat single-pass extractor dict was ever
+    "skipped" the way a firecrawl datapoint theoretically could be."""
+    return {name: {"ran": True, "is_empty": _is_blank(value), "source": source} for name, value in row.items()}
+
+
+def evaluate_record(
+    row: Dict[str, Any],
+    function_report: Dict[str, dict],
+    contracts: Dict[str, DatapointContract],
+    source_label: str,
+    dead_letter: Optional[DeadLetterQueue] = None,
+    drift: Optional[DriftTracker] = None,
+) -> Dict[str, Any]:
+    """The generic sibling of process_page()'s tail half (schema_gate +
+    quality_score + drift), for record-shaped input that was never a
+    crawled markdown page - an Apify company/person extraction, today.
+    Deliberately skips crawl_issue/is_company_profile/content_integrity:
+    those are all "was this a usable scraped webpage" concepts (see
+    triage.py's module docstring) that don't apply to an already-
+    structured record.
+
+    `source_label` namespaces drift recording (see DriftTracker's
+    `namespace` param) so an Apify function and a Firecrawl function that
+    happen to share a name never corrupt each other's rolling-window
+    baseline, and tags the dead-letter record when this row is rejected.
+
+    Returns `row` plus is_valid_row/quality_score/rejection_reasons/
+    drift_warnings/schema_version - the same result shape process_page()
+    returns, minus the crawl-specific fields it doesn't have a value for.
+    """
+    dead_letter = dead_letter if dead_letter is not None else DeadLetterQueue()
+    drift = drift if drift is not None else DriftTracker()
+
+    violations = schema_gate.evaluate_row(row, contracts=contracts)
+    score = quality_score.compute_quality_score(function_report, contracts)
+
+    drift_warnings: List[str] = []
+    for name, entry in function_report.items():
+        drift.record_run(name, entry["is_empty"], namespace=source_label)
+        if drift.is_drifting(name, namespace=source_label):
+            drift_warnings.append(f"drift_warning:{name}")
+
+    result = dict(row)
+    result["is_valid_row"] = not violations
+    result["quality_score"] = score
+    result["rejection_reasons"] = violations
+    result["drift_warnings"] = drift_warnings
+    result["schema_version"] = _SCHEMA_VERSION
+
+    if violations:
+        dead_letter.append(row, violations, source=source_label)
+
+    return result

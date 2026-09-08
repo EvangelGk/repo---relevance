@@ -1,7 +1,24 @@
-"""Single source of truth for what each of Firecrawl's datapoint functions
+"""Single source of truth for what each datapoint function across silver/
 is contractually expected to produce - mirrors the finance project's
 SeriesContract/SourceContract pattern: frozen dataclasses instead of magic
 numbers scattered across schema_gate.py, quality_score.py, and drift.py.
+
+Three contract dicts live here, one per source that has real, working
+extraction code today:
+
+- DATAPOINT_CONTRACTS - Firecrawl's, the original set, still the default
+  everywhere a `contracts` parameter is optional.
+- APIFY_COMPANY_CONTRACTS / APIFY_PEOPLE_CONTRACTS - added 2026-09-08 for
+  `apify/company/universal` and `apify/people/universal`, whose
+  extract_*_universal_fields() functions produce a real flat dict today.
+
+Deliberately NOT covered here (as of 2026-09-08): silver/prospeo/ (a
+docstring-only loader stub, no parsing logic yet, join key undecided) and
+silver/apify/*/secondary/ (no extract.py/runner exists for either side -
+just individual functions with documented-unconfirmed field names, e.g.
+hiring_signal.py). Writing contracts for fields nothing actually extracts
+yet would be guessing shapes the same way this repo has explicitly refused
+to elsewhere - add contracts here once each has real output to gate.
 
 Trimmed 2026-09-08 from the original 17-plus-company_description_extract
 set down to this list: structured_data_extract (needed JSON-LD that
@@ -130,5 +147,81 @@ DATAPOINT_CONTRACTS: Dict[str, DatapointContract] = {
         required=False,
         null_tolerance_pct=35.0,
         source_priority=("markdown",),
+    ),
+}
+
+
+# apify/company/universal/extract.py's extract_company_universal_fields()
+# output - one contract per field, all required=False (no join-key-critical
+# field lives here; domain_normalize stays Firecrawl's job per
+# apify/company/universal/README.md) and all source_priority=("apify",)
+# since nothing else produces these fields (yet - see foreman/ for the one
+# exception, company_name, which isn't in this dict because it's resolved
+# across two sources, not a single-source Apify field).
+#
+# null_tolerance_pct values below are PROVISIONAL: no live Apify
+# integration exists in this repo yet (every apify/*/universal/datapoints/
+# module docstring says so), so these are conservative estimates of a
+# LinkedIn-company-scrape's typical field-presence rate, not measurements.
+# Revisit once a real Apify sample confirms actual hit rate - same
+# discipline /review-contract already applies to the Firecrawl contracts
+# above.
+APIFY_COMPANY_CONTRACTS: Dict[str, DatapointContract] = {
+    "name": DatapointContract(
+        required=False,
+        null_tolerance_pct=15.0,  # a LinkedIn company scrape without a name would be a scrape failure
+        source_priority=("apify",),
+    ),
+    "industry": DatapointContract(
+        required=False,
+        null_tolerance_pct=35.0,
+        source_priority=("apify",),
+    ),
+    "headcount": DatapointContract(
+        required=False,
+        null_tolerance_pct=40.0,  # LinkedIn's headcount range is common but not universal
+        source_priority=("apify",),
+    ),
+    "location": DatapointContract(
+        required=False,
+        null_tolerance_pct=30.0,
+        source_priority=("apify",),
+    ),
+    "linkedin_url": DatapointContract(
+        required=False,
+        null_tolerance_pct=10.0,  # this is the record's own join key - if Apify returned it, this is almost always present
+        source_priority=("apify",),
+    ),
+}
+
+
+# apify/people/universal/extract.py's extract_person_universal_fields()
+# output. Same provisional-tolerance caveat as APIFY_COMPANY_CONTRACTS
+# above - no live Apify integration exists yet.
+APIFY_PEOPLE_CONTRACTS: Dict[str, DatapointContract] = {
+    "linkedin_url": DatapointContract(
+        required=False,
+        null_tolerance_pct=10.0,  # the scrape's own join key
+        source_priority=("apify",),
+    ),
+    "full_name": DatapointContract(
+        required=False,
+        null_tolerance_pct=10.0,  # every LinkedIn profile has a name
+        source_priority=("apify",),
+    ),
+    "job_title": DatapointContract(
+        required=False,
+        null_tolerance_pct=20.0,
+        source_priority=("apify",),
+    ),
+    "country": DatapointContract(
+        required=False,
+        null_tolerance_pct=35.0,
+        source_priority=("apify",),
+    ),
+    "linkedin_about": DatapointContract(
+        required=False,
+        null_tolerance_pct=50.0,  # the About section is frequently left blank
+        source_priority=("apify",),
     ),
 }
