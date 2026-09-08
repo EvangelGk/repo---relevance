@@ -1,29 +1,61 @@
-"""Streamlit test harness for the Silver layer: paste (or upload) cleaned
-markdown, hit "Run Firecrawl", get one row with a column per datapoint plus
-the audit signal (quality_score, is_valid_row, rejection_reasons) up front
-and the raw markdown last.
+"""Streamlit UI - human-friendly visual auditing.
 
-This runs everything through SilverOrchestrator rather than calling
-Firecrawl directly - Firecrawl is pure execution (runs every registered
-datapoint function, reports what happened) and never decides whether a page was
-worth running or whether its output is good enough to trust. That decision
-(is_company_profile, schema_gate, quality_score, drift) is
-SilverOrchestrator's job, so a rejected or low-quality result is visible
-right in this table instead of silently looking like any other row.
+Redesigned version of this repo's original single-table app.py (retired -
+this file is now the only app, run with `poetry run streamlit run app.py`).
 
-Run with: streamlit run app.py
+Two halves:
+  1. "Firecrawl Audit" - the SilverOrchestrator-backed pipeline, redesigned
+     for a reviewer to scan at a glance: quality/validity/crawl-status
+     badges up top, rejection/drift called out as alerts instead of
+     buried table cells, datapoints grouped into Identity / Descriptive /
+     Signals cards each showing its value next to a colored source badge,
+     conflict_check surfaced as its own panel, and a running session
+     history table so multiple pages can be compared in one sitting.
+     Accepts either pasted/uploaded markdown or a raw Firecrawl JSON
+     export (Firecrawl's scrape API returns JSON, not bare markdown).
+  2. "Unified Row Preview" - a live demo of the silver/company/ and
+     silver/people/ connectors from the source-first restructure. Clearly
+     labeled preview: nothing here is wired into a production pipeline
+     pending admin sign-off on that restructure - it exists so a reviewer
+     can see the new architecture's *output shape* today, either from a
+     raw Apify JSON record (upload) or manually entered stand-in fields
+     (no live Apify/Prospeo scraper wired into this repo yet).
 """
 import json
 
 import pandas as pd
 import streamlit as st
 
+from silver.apify.company.universal.extract import extract_company_universal_fields
+from silver.apify.company.universal.loader import load_apify_company_records
+from silver.apify.people.universal.extract import extract_person_universal_fields
+from silver.apify.people.universal.loader import load_apify_person_records
+from silver.company.connector import assemble_company_row
 from silver.firecrawl import Firecrawl
+from silver.firecrawl.raw_response_loader import extract_markdown_and_source_url
+from silver.people.connector import assemble_person_row
+from silver.silver_orchestrator.contracts import DATAPOINT_CONTRACTS
 from silver.silver_orchestrator.orchestrator import SilverOrchestrator
 
-_FLAG_COLUMNS = ["quality_score", "is_valid_row", "rejection_reasons"]
-_LAST_COLUMN = "raw_markdown_input"
-_INVALID_ROW_HIGHLIGHT = "background-color: #fbdcdc"
+st.set_page_config(page_title="Silver Layer Audit", layout="wide")
+
+_SOURCE_COLORS = {
+    "context": "#1f77b4",
+    "markdown": "#2ca02c",
+    "markdown_fallback": "#ff7f0e",
+    "hreflang": "#9467bd",
+    "html": "#17becf",
+    None: "#999999",
+}
+_DATAPOINT_GROUPS = {
+    "Identity (join keys)": ["domain_normalize", "company_entity_resolve"],
+    "Descriptive": ["company_description_extract", "legal_entity_extract", "business_model"],
+    "Signals": [
+        "tech_stack_normalize", "compliance_framework_extract", "experience_signal_extract",
+        "service_region_extract", "pricing_locale_extract", "careers_page_parse",
+        "social_links_extract", "site_locale_detect", "date_normalize",
+    ],
+}
 
 
 @st.cache_resource
@@ -31,110 +63,301 @@ def get_orchestrator() -> SilverOrchestrator:
     return SilverOrchestrator(Firecrawl())
 
 
+def _source_chip(source) -> str:
+    color = _SOURCE_COLORS.get(source, "#999999")
+    label = source or "empty"
+    return (
+        f'<span style="background:{color}22;color:{color};border:1px solid {color};'
+        f'border-radius:999px;padding:1px 8px;font-size:0.75em;font-weight:600;">{label}</span>'
+    )
+
+
+def _quality_color(score: float) -> str:
+    if score >= 80:
+        return "#2ca02c"
+    if score >= 50:
+        return "#ff7f0e"
+    return "#d62728"
+
+
+def _render_audit_header(row: dict):
+    score = row.get("quality_score", 0.0)
+    is_valid = bool(row.get("is_valid_row"))
+    color = _quality_color(score)
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.markdown(
+        f'<div style="font-size:2em;font-weight:700;color:{color};">{score:.0f}/100</div>'
+        f'<div style="color:#666;">Quality score</div>',
+        unsafe_allow_html=True,
+    )
+    col2.markdown(
+        ("✅ **Valid row**" if is_valid else "🚫 **Rejected row**"),
+    )
+    col3.markdown(f"**Crawl status:** `{row.get('crawl_status', '-')}`")
+    col4.markdown(f"**Content integrity:** `{row.get('content_integrity', '-')}`")
+
+    if not is_valid:
+        st.error(f"Rejected - reasons: {row.get('rejection_reasons') or [row.get('crawl_issue')]}")
+    if row.get("drift_warnings"):
+        st.warning(f"Drift warnings: {row['drift_warnings']}")
+
+
+def _render_conflicts(row: dict):
+    locale_conflict = row.get("locale_conflict")
+    name_conflict = row.get("company_name_conflict")
+    if not locale_conflict and not name_conflict:
+        return
+    with st.expander("⚠️ conflict_check flagged a disagreement", expanded=True):
+        if locale_conflict:
+            st.write(f"**Locale conflict:** {row.get('locale_conflict_detail')}")
+        if name_conflict:
+            st.write(f"**Company name conflict:** {row.get('company_name_conflict_detail')}")
+
+
+def _render_datapoints(row: dict, function_report: dict):
+    for group_title, names in _DATAPOINT_GROUPS.items():
+        with st.expander(group_title, expanded=(group_title == "Identity (join keys)")):
+            for name in names:
+                if name not in DATAPOINT_CONTRACTS:
+                    continue
+                value = row.get(name)
+                source = (function_report.get(name) or {}).get("source")
+                left, right = st.columns([4, 1])
+                with left:
+                    st.markdown(f"**{name}**")
+                    if value in (None, [], {}):
+                        st.caption("empty")
+                    elif isinstance(value, (dict, list)):
+                        st.json(value)
+                    else:
+                        st.write(value)
+                with right:
+                    st.markdown(_source_chip(source), unsafe_allow_html=True)
+
+
 def _flatten_row(row: dict) -> dict:
-    """JSON-encode every non-scalar value so the row fits in a table cell -
-    same flattening Firecrawl.run_all_as_dataframe() used to do, now applied
-    to SilverOrchestrator's row instead."""
     return {
         key: value if isinstance(value, (str, int, float, bool, type(None))) else json.dumps(value, default=str)
         for key, value in row.items()
     }
 
 
-def _reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Audit signal first, raw markdown last, everything else in between -
-    so the reviewer sees whether to trust a row before scrolling through
-    every datapoint column to find out."""
-    flag_cols = [c for c in _FLAG_COLUMNS if c in df.columns]
-    last_col = [_LAST_COLUMN] if _LAST_COLUMN in df.columns else []
-    middle_cols = [c for c in df.columns if c not in flag_cols and c not in last_col]
-    return df[flag_cols + middle_cols + last_col]
+def _run_firecrawl_audit_tab():
+    orchestrator = get_orchestrator()
 
-
-def _highlight_invalid_rows(row: pd.Series):
-    style = _INVALID_ROW_HIGHLIGHT if not row.get("is_valid_row", True) else ""
-    return [style] * len(row)
-
-
-def _sort_valid_first(df: pd.DataFrame) -> pd.DataFrame:
-    """Same stable valid-first ordering as SilverOrchestrator.process_batch,
-    kept here too so a future batch-upload path and this single-row path
-    always agree on how rows are ordered."""
-    if df.empty or "is_valid_row" not in df.columns:
-        return df
-    sort_key = (~df["is_valid_row"].astype(bool)).to_numpy()
-    return df.iloc[sort_key.argsort(kind="stable")].reset_index(drop=True)
-
-
-orchestrator = get_orchestrator()
-
-st.set_page_config(page_title="Firecrawl", layout="wide")
-st.title("Firecrawl")
-st.caption("Paste or upload cleaned markdown from a scraped page, run every datapoint extractor at once.")
-
-uploaded_file = st.file_uploader("Upload a markdown file", type=["md", "markdown", "txt"])
-pasted_markdown = st.text_area(
-    "Or paste cleaned markdown", height=350, placeholder="Paste Firecrawl markdown here..."
-)
-markdown_input = uploaded_file.read().decode("utf-8") if uploaded_file is not None else pasted_markdown
-
-with st.expander("Optional context overrides"):
-    st.caption("Fill in whatever the page itself can't supply (blank = skipped).")
-    col1, col2 = st.columns(2)
-    with col1:
-        source_url = st.text_input("source_url")
-        company_name = st.text_input("company_name")
-        company_description = st.text_input("company_description")
-        parent_guess = st.text_input("parent_guess")
-        entity_id = st.text_input("entity_id")
-        raw_date = st.text_input("raw_date")
-        regulatory_event_text = st.text_input("regulatory_event_text")
-    with col2:
-        timeseries_field = st.text_input("timeseries_field", value="numberOfEmployees")
-        timeseries_value = st.text_input("timeseries_value")
-        snapshot_date = st.text_input("snapshot_date")
-        last_enriched_date = st.text_input("last_enriched_date")
-        re_verification_due_date = st.text_input("re_verification_due_date")
-
-run_clicked = st.button("Run Firecrawl", type="primary", disabled=not markdown_input.strip())
-
-if run_clicked:
-    overrides = {
-        "source_url": source_url,
-        "company_name": company_name,
-        "company_description": company_description,
-        "parent_guess": parent_guess,
-        "entity_id": entity_id,
-        "raw_date": raw_date,
-        "regulatory_event_text": regulatory_event_text,
-        "timeseries_field": timeseries_field,
-        "timeseries_value": timeseries_value,
-        "snapshot_date": snapshot_date,
-        "last_enriched_date": last_enriched_date,
-        "re_verification_due_date": re_verification_due_date,
-    }
-    overrides = {k: v for k, v in overrides.items() if v}
-
-    row = orchestrator.process_page(markdown_input, overrides)
-    st.session_state["last_result"] = _flatten_row(row)
-
-if "last_result" in st.session_state:
-    row = st.session_state["last_result"]
-    df = pd.DataFrame([row])
-    df = _reorder_columns(df)
-    df = _sort_valid_first(df)
-
-    st.subheader("Result")
-    if not bool(df.iloc[0]["is_valid_row"]):
-        st.warning(f"Rejected: {df.iloc[0]['rejection_reasons']}")
-    styled = df.style.apply(_highlight_invalid_rows, axis=1)
-    st.dataframe(styled, use_container_width=True)
-
-    st.download_button(
-        "Download as CSV",
-        df.to_csv(index=False).encode("utf-8"),
-        file_name="firecrawl_result.csv",
-        mime="text/csv",
+    st.caption(
+        "Paste cleaned markdown, or upload a raw Firecrawl JSON export "
+        "(Firecrawl's scrape API returns JSON - {\"markdown\": ..., \"metadata\": {\"sourceURL\": ...}} - "
+        "not bare markdown text; a plain .md/.txt file still works too)."
     )
-    with st.expander("Raw JSON (excludes raw_markdown_input)"):
-        st.json({k: v for k, v in row.items() if k != _LAST_COLUMN})
+
+    uploaded_file = st.file_uploader(
+        "Upload a Firecrawl JSON export, or a plain markdown file",
+        type=["json", "md", "markdown", "txt"], key="v2_upload",
+    )
+    pasted_markdown = st.text_area(
+        "Or paste cleaned markdown", height=250, placeholder="Paste Firecrawl markdown here...", key="v2_paste"
+    )
+
+    extracted_source_url = None
+    if uploaded_file is not None:
+        raw_bytes = uploaded_file.read()
+        if uploaded_file.name.lower().endswith(".json"):
+            loaded = extract_markdown_and_source_url(json.loads(raw_bytes.decode("utf-8")))
+            markdown_input = loaded["markdown"] or ""
+            extracted_source_url = loaded["source_url"]
+            if extracted_source_url:
+                st.caption(f"Extracted source_url from JSON: `{extracted_source_url}`")
+        else:
+            markdown_input = raw_bytes.decode("utf-8")
+    else:
+        markdown_input = pasted_markdown
+
+    with st.expander("Optional context overrides"):
+        col1, col2 = st.columns(2)
+        with col1:
+            source_url = st.text_input("source_url", key="v2_source_url")
+            company_name = st.text_input("company_name", key="v2_company_name")
+            company_description = st.text_input("company_description", key="v2_company_description")
+        with col2:
+            parent_guess = st.text_input("parent_guess", key="v2_parent_guess")
+            entity_id = st.text_input("entity_id", key="v2_entity_id")
+            raw_date = st.text_input("raw_date", key="v2_raw_date")
+
+    run_clicked = st.button("Run audit", type="primary", disabled=not markdown_input.strip(), key="v2_run")
+
+    if run_clicked:
+        overrides = {
+            "source_url": source_url or extracted_source_url,
+            "company_name": company_name,
+            "company_description": company_description,
+            "parent_guess": parent_guess,
+            "entity_id": entity_id,
+            "raw_date": raw_date,
+        }
+        overrides = {k: v for k, v in overrides.items() if v}
+
+        row = orchestrator.process_page(markdown_input, overrides)
+        function_report = {}
+        if row.get("crawl_issue") == "none":
+            # process_page() doesn't expose function_report (only
+            # is_empty/violations derived from it) - re-run Firecrawl
+            # directly, read-only, purely so this UI can show per-field
+            # source badges. Cheap relative to a human staring at a table.
+            function_report = orchestrator.firecrawl.run_all(markdown_input, **overrides)["function_report"]
+
+        st.session_state["v2_last_result"] = row
+        st.session_state["v2_last_function_report"] = function_report
+        history = st.session_state.setdefault("v2_history", [])
+        history.append({
+            "quality_score": row.get("quality_score"),
+            "is_valid_row": row.get("is_valid_row"),
+            "crawl_status": row.get("crawl_status"),
+            "domain_normalize": row.get("domain_normalize"),
+        })
+
+    if "v2_last_result" in st.session_state:
+        row = st.session_state["v2_last_result"]
+        function_report = st.session_state.get("v2_last_function_report", {})
+
+        st.divider()
+        _render_audit_header(row)
+        _render_conflicts(row)
+        st.subheader("Datapoints")
+        _render_datapoints(row, function_report)
+
+        st.download_button(
+            "Download as CSV",
+            pd.DataFrame([_flatten_row(row)]).to_csv(index=False).encode("utf-8"),
+            file_name="firecrawl_result.csv",
+            mime="text/csv",
+            key="v2_download",
+        )
+        with st.expander("Raw JSON (excludes raw_markdown_input)"):
+            st.json({k: v for k, v in row.items() if k != "raw_markdown_input"})
+        with st.expander("Raw markdown input"):
+            st.text(row.get("raw_markdown_input", ""))
+
+    history = st.session_state.get("v2_history")
+    if history:
+        st.divider()
+        st.subheader("Session history")
+        st.dataframe(pd.DataFrame(history), use_container_width=True)
+
+
+def _run_unified_preview_tab():
+    st.warning(
+        "Preview only - silver/company/ and silver/people/ are additive scaffolding from the "
+        "2026-09-08 restructure, not wired into any production pipeline yet. This tab runs the "
+        "real connector code against manually entered stand-in Apify/Prospeo fields, since "
+        "silver/apify/ and silver/prospeo/ have no live scraper wired in yet."
+    )
+
+    company_tab, people_tab = st.tabs(["Company row", "Person row"])
+
+    with company_tab:
+        st.caption(
+            "Firecrawl half: paste markdown or upload a Firecrawl JSON export. "
+            "Apify half: upload a raw Apify company JSON record, or fill the fields manually."
+        )
+
+        firecrawl_json_file = st.file_uploader(
+            "Firecrawl JSON export (optional - overrides the markdown box below)",
+            type=["json"], key="v2_company_firecrawl_json",
+        )
+        markdown_input = st.text_area(
+            "Cleaned markdown (drives domain/description/company_id via Firecrawl)",
+            height=150, key="v2_company_markdown",
+        )
+        source_url = st.text_input("source_url (ignored if the JSON export above supplies one)", key="v2_company_source_url")
+
+        if firecrawl_json_file is not None:
+            loaded = extract_markdown_and_source_url(json.loads(firecrawl_json_file.read().decode("utf-8")))
+            markdown_input = loaded["markdown"] or ""
+            source_url = loaded["source_url"] or source_url
+
+        apify_json_file = st.file_uploader(
+            "Apify company JSON record (optional - overrides the fields below)",
+            type=["json"], key="v2_company_apify_json",
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            apify_name = st.text_input("apify: name", key="v2_apify_name")
+            apify_industry = st.text_input("apify: industry", key="v2_apify_industry")
+            apify_headcount = st.number_input("apify: headcount", min_value=0, value=0, step=1, key="v2_apify_headcount")
+        with col2:
+            apify_location = st.text_input("apify: location", key="v2_apify_location")
+            apify_linkedin = st.text_input("apify: linkedin_url", key="v2_apify_linkedin")
+            source_link = st.text_input("source_link (batch/ingestion tag)", key="v2_company_source_link")
+
+        if apify_json_file is not None:
+            records = load_apify_company_records(json.loads(apify_json_file.read().decode("utf-8")))
+            apify_company = extract_company_universal_fields(records[0])
+            if len(records) > 1:
+                st.caption(f"JSON had {len(records)} records - using the first one for this single-row preview.")
+        else:
+            apify_company = {
+                "name": apify_name or None,
+                "industry": apify_industry or None,
+                "headcount": apify_headcount or None,
+                "location": apify_location or None,
+                "linkedin_url": apify_linkedin or None,
+            }
+
+        if st.button("Assemble company row", key="v2_assemble_company", disabled=not markdown_input.strip()):
+            firecrawl_row = Firecrawl().run_all(markdown_input, source_url=source_url)["row"]
+            result = assemble_company_row(apify_company, firecrawl_row, source_link=source_link or None)
+            st.json(result)
+
+    with people_tab:
+        st.caption(
+            "Apify half: upload a raw Apify person JSON record, or fill the fields manually. "
+            "Prospeo half: manual only for now - silver/prospeo/people/universal/loader.py is still "
+            "a docstring-only stub pending a real CSV sample to confirm its join key against."
+        )
+
+        apify_json_file = st.file_uploader(
+            "Apify person JSON record (optional - overrides the fields below)",
+            type=["json"], key="v2_people_apify_json",
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            full_name = st.text_input("apify: full_name", key="v2_people_full_name")
+            job_title = st.text_input("apify: job_title", key="v2_people_job_title")
+            employed_company = st.text_input("apify: employed_company", key="v2_people_employed_company")
+        with col2:
+            country = st.text_input("apify: country", key="v2_people_country")
+            linkedin_url = st.text_input("apify: linkedin_url", key="v2_people_linkedin_url")
+            linkedin_about = st.text_area("apify: linkedin_about", height=80, key="v2_people_about")
+        email = st.text_input("prospeo: email", key="v2_people_email")
+        people_source_link = st.text_input("source_link (batch/ingestion tag)", key="v2_people_source_link")
+
+        if apify_json_file is not None:
+            records = load_apify_person_records(json.loads(apify_json_file.read().decode("utf-8")))
+            apify_person = extract_person_universal_fields(records[0])
+            if len(records) > 1:
+                st.caption(f"JSON had {len(records)} records - using the first one for this single-row preview.")
+        else:
+            apify_person = {
+                "full_name": full_name or None,
+                "job_title": job_title or None,
+                "employed_company": employed_company or None,
+                "country": country or None,
+                "linkedin_url": linkedin_url or None,
+                "linkedin_about": linkedin_about or None,
+            }
+        prospeo_person = {"email": email or None}
+
+        if st.button("Assemble person row", key="v2_assemble_person"):
+            result = assemble_person_row(apify_person, prospeo_person, source_link=people_source_link or None)
+            st.json(result)
+
+
+st.title("Silver Layer Audit")
+
+audit_tab, preview_tab = st.tabs(["🔍 Firecrawl Audit", "🧩 Unified Row Preview"])
+with audit_tab:
+    _run_firecrawl_audit_tab()
+with preview_tab:
+    _run_unified_preview_tab()
