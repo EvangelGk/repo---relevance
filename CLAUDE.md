@@ -4,9 +4,10 @@ Context and working agreements for Claude Code in this repository.
 
 ## What this repo is
 
-The Silver layer of a company-enrichment pipeline. `bronze/` and a future
-full "Artemis" orchestrator layer are referenced conceptually in code
-comments but don't exist here yet. Not currently a git repository.
+The Silver layer of a company-enrichment pipeline. A future full "Artemis"
+orchestrator layer is referenced conceptually in code comments but doesn't
+exist here yet. `bronze/` held nothing until the 2026-09-08 addition below
+gave it its first real piece (`bronze/clay/`).
 
 ## Layout
 
@@ -14,7 +15,24 @@ comments but don't exist here yet. Not currently a git repository.
 repo root/
   app.py                          - Streamlit UI, SilverOrchestrator-backed
   pyproject.toml / poetry.toml     - dependency + venv config (see Environment)
-  bronze/                          - empty, future layer
+  client_context/                 - ClientContext (interpreted-brief/ICP spec), Artemis step 1
+    schema.py                     - ClientContext dataclass, load/validate, Clay enum constants
+    clients/                      - one JSON file per client context
+  bronze/                         - Artemis step 3 (pull from source)
+    clay/                         - Clay public API: company search driven by a ClientContext
+      _http.py                    - stdlib-only authenticated client (CLAY_PUBLIC_API_KEY)
+      query_builder.py            - ClientContext -> Clay search-query-language string
+      search.py                   - run_company_search(): query-mode create + paginated run
+    firecrawl/                    - PLACEHOLDER: direct Firecrawl.dev scrape calls, no Clay relay
+      _http.py                    - stdlib-only authenticated client (FIRECRAWL_API_KEY)
+      scrape.py                   - scrape_url(): -> {markdown, source_url, title, status_code}
+    apify/                        - PLACEHOLDER: direct Apify actor calls, no Clay relay
+      _http.py                    - stdlib-only authenticated client (APIFY_API_TOKEN)
+      run_actor.py                - run_actor(): sync actor run -> raw dataset items, unflattened
+    prospeo/                      - PLACEHOLDER: direct Prospeo calls, primary people source
+      _http.py                    - stdlib-only authenticated client (PROSPEO_API_KEY, X-KEY header)
+      search_person.py            - search_person(): job-title-filtered discovery, unrevealed contacts
+      enrich_person.py            - enrich_person(): separate, costlier reveal of email/mobile
   silver/
     apify/                        - empty, future source
     si_orchestrator/              - empty stub; unrelated to silver_orchestrator/ below
@@ -227,3 +245,139 @@ of a blanket "delete anything with a low hit rate":
   "18" count you see elsewhere in old comments is stale - the count is
   meant to be read off `contracts.DATAPOINT_CONTRACTS`, not memorized,
   since it will keep changing.
+
+## 2026-09-08 addition: client_context/ + bronze/clay/ (Clay company search)
+
+New scope beyond what this file described until today - Artemis steps 1
+("interpret brief") and 3 ("pull from source"), which ARTEMIS_CONTEXT.md
+had previously scoped as out of bounds for this repo (it only prototyped
+steps 5-6). Added at explicit user direction while exploring Clay's public
+developer API from the terminal; not a silent scope drift.
+
+- `client_context/schema.py` - `ClientContext`, a frozen dataclass for one
+  client's interpreted ICP, loaded from a JSON file via
+  `load_client_context()` / `list_client_contexts()`. Field names mirror
+  Clay's own company-search field catalog on purpose (see the module
+  docstring) so a context file's shape stays legible against Clay's docs.
+  `industries` and `company_size_buckets` are validated at load time
+  against `CLAY_INDUSTRIES`/`CLAY_COMPANY_SIZE_BUCKETS`, both extracted
+  verbatim from Clay's live `GET /search/query-mode/reference` on
+  2026-09-08 (not hand-typed) - re-pull and regenerate if Clay's enum
+  values ever change. `hq_countries`/`hq_cities` are deliberately NOT
+  enum-validated (Clay's country enum is ~250 entries; duplicating it here
+  would just be a second copy to drift out of sync with Clay's own list).
+- `bronze/clay/_http.py` - stdlib-`urllib`-only client (no `requests`
+  dependency added; would have meant a poetry lock/install round-trip
+  before any of this could be tried). Reads `CLAY_PUBLIC_API_KEY` from the
+  environment, falling back to a hand-rolled `.env` parse anchored to this
+  module's own file location - the same "anchor to module location, not
+  caller's cwd" pattern `dead_letter.py`/`drift.py` already use.
+- `bronze/clay/query_builder.py` - `build_company_query(ClientContext)`
+  builds a Clay search-query-language string. Every clause is grounded in
+  a specific rule from Clay's live query-mode reference doc (cited inline)
+  - nothing here invents Clay syntax for a case the reference doesn't
+  confirm.
+- `bronze/clay/search.py` - `run_company_search()`: the two-step Clay flow
+  (`POST /search/query-mode` to compile, then repeated
+  `POST /search/query-mode/{id}/run` calls paging on `has_more` until
+  `ClientContext.limit` results are collected). Returns Clay's raw result
+  dicts; merging them onto a Silver row (keyed by `domain_normalize`) is a
+  separate, not-yet-built step.
+- **Confirmed live against the real API, not just unit-tested**: a
+  `ClientContext` round-tripped through `example_client.json` ->
+  `build_company_query` -> `run_company_search` returned real companies
+  (ignitetech.com, cloudeagle.ai, procol.ai) for a US/UK B2B-SaaS,
+  51-500-employee, Software-Development-industry query.
+- **Real bug found live, not hypothetical**: `exclude_domains` (->
+  `clay.exclude_company_identifiers`) fails the **entire** search with
+  HTTP 400 if even one domain in the list doesn't resolve to a company
+  Clay knows about - not a partial result with the bad entry skipped. A
+  real "already a customer" exclude list will eventually contain one
+  stale/acquired/typo'd domain; documented as a live caveat in
+  `query_builder.py` rather than silently worked around, since no
+  known-good handling exists yet (catch `ClayAPIError` and retry without
+  the offending domain, or pre-verify every domain resolves).
+- `pyproject.toml`'s `testpaths` extended from `["silver"]` to
+  `["silver", "client_context", "bronze"]` so `poetry run pytest` actually
+  discovers the new test suites - previously they'd have silently not run.
+- `.env` / `.env.example` added (gitignored / committed template
+  respectively) for `CLAY_PUBLIC_API_KEY` and `CLAY_WORKSPACE_ID`.
+
+## 2026-09-08 addition: bronze/firecrawl/ + bronze/apify/ (placeholders)
+
+Decided, in the same terminal conversation as the client_context/bronze.clay
+addition above: Firecrawl and Apify are single-vendor, no-waterfall calls
+(unlike a Clay-managed enrichment, there's no second provider to fail over
+to), so they're called **directly** from Python - no Clay relay. Routing
+either through a Clay function was found to add a real storage ceiling for
+zero benefit (a Clay basic/formula column caps at 8,000 characters, an
+action/HTTP-API column at 200KB - a long scraped page or an Apify actor's
+full item array can exceed both, and the Public API can't return more than
+what Clay actually stored, since truncation happens at write time, not at
+read time).
+
+- `bronze/firecrawl/_http.py` + `scrape.py` - `scrape_url()` calls
+  Firecrawl.dev's `/scrape` directly and returns `{markdown, source_url,
+  title, status_code}`. `source_url` is `data.metadata.sourceURL` - exactly
+  the `context["source_url"]` input `domain_normalize` requires, so the
+  result can be handed straight to `Firecrawl.run_all()`.
+- `bronze/apify/_http.py` + `run_actor.py` - `run_actor()` calls Apify's
+  `run-sync-get-dataset-items` convenience endpoint (one call: run an
+  actor synchronously, get its dataset items back directly, no separate
+  poll) and returns the raw item dicts, deliberately unflattened - a
+  different actor returns a different shape, so no per-actor field logic
+  belongs in this module. `silver/apify/` (still empty) is the reserved
+  slot for that normalization, mirroring how `silver/firecrawl/datapoints/
+  *.py` turns raw markdown into typed fields.
+- **Genuinely placeholders, not fully wired in yet**: neither module is
+  called from `SilverOrchestrator` or anywhere else. Apify's async
+  run + poll + fetch-dataset flow (for an actor that outruns the 300s
+  synchronous window) isn't implemented. Which actor(s) this repo will
+  actually use isn't decided - `run_actor()` takes `actor_id` as a
+  parameter rather than hardcoding one.
+- `.env` / `.env.example` extended with `FIRECRAWL_API_KEY` and
+  `APIFY_API_TOKEN` (both `Authorization: Bearer <...>`, confirmed live
+  against each vendor's docs 2026-09-08).
+- **Both keys live-tested successfully once populated**: `scrape_url` on
+  `https://firecrawl.dev` returned a real 200 with ~29.6k characters of
+  markdown; `run_actor("apify~hello-world", ...)` returned
+  `[{"message": "Hello world!"}]` after the token was independently
+  confirmed via `GET /users/me`. Gotcha for later: Apify's store page
+  shows actor paths with a slash (`apify/hello-world`) but the API needs
+  the tilde form (`apify~hello-world`) - `run_actor()`'s docstring already
+  documents this correctly.
+
+## 2026-09-08 addition: bronze/prospeo/ (placeholder) - primary people source
+
+Decided in the same terminal conversation: unlike Firecrawl/Apify,
+Prospeo's Search Person endpoint is a genuine proprietary discovery
+dataset (200M+ contacts, 30+ filters - job title, seniority, company,
+location), the same category as Clay's own company search rather than a
+single-utility relay. It's called directly because Clay's own native
+Prospeo integration only covers Prospeo's *enrichment* endpoints (billed
+through Clay's credits), not this separate Search Person product - so
+using Search Person as a people source needs its own account regardless.
+
+- Auth confirmed live against prospeo.io/api-docs, 2026-09-08: base URL
+  `https://api.prospeo.io`, a plain `X-KEY` header - not `Authorization:
+  Bearer` like Firecrawl/Apify/most REST APIs, so don't assume the same
+  shape when adding a fourth vendor.
+- `search_person.py` - job-title include/exclude + `match_mode` (Prospeo's
+  filtering is list-based, NOT literal boolean AND/OR/NOT operator
+  syntax, despite reading that way colloquially). Deliberately does not
+  reveal email/mobile - those fields come back present but masked.
+- `enrich_person.py` - the separate, costlier call (1 credit/email,
+  10 credits/mobile) that actually reveals contact details. Split into two
+  modules on purpose: `search_person()` is cheap (1 credit per successful
+  search, up to 25 results, free within a 30-day dedup window) and should
+  be gated on before ever calling `enrich_person()` - the same
+  "gate before you spend" discipline `triage.py` already applies in front
+  of Firecrawl. The gate itself isn't built yet; this is still a
+  placeholder.
+- Likely (not confirmed) explanation for an observed dashboard behavior:
+  Prospeo's web UI "search and download" flow appears to silently call an
+  enrich-equivalent step per row before export, since a downloaded CSV
+  shows revealed fields the Search Person API alone never returns. Not
+  documented anywhere Clay-adjacent; verify against the account's own
+  credit/usage history, not this comment, before relying on it.
+- `.env` / `.env.example` extended with `PROSPEO_API_KEY`.

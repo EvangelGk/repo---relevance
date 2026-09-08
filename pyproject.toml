@@ -17,7 +17,9 @@ pytest = ">=8.0"
 playwright = ">=1.40"
 
 [tool.pytest.ini_options]
-testpaths = ["silver"]
+# Extended 2026-09-08 to cover client_context/ and bronze/clay/ (new -
+# see their own docstrings) alongside the original silver/ scope.
+testpaths = ["silver", "client_context", "bronze"]
 python_files = ["test_*.py"]
 # package-mode=false means "silver" is never pip-installed - without this,
 # `poetry run pytest` (invoked as a console-script, unlike `python -m
