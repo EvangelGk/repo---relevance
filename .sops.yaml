@@ -1,0 +1,15 @@
+# SOPS+age config for this repo's encrypted secrets (.env.enc).
+#
+# NOTE: sops has no "input_type"/"output_type" creation_rule key - those
+# are CLI-only flags (--input-type/--output-type). The dotenv format is
+# pinned explicitly in the Makefile's secrets-encrypt/secrets-decrypt
+# targets instead; don't rely on sops's filename-extension guessing here,
+# it disagrees between a ".env" input and a ".env.enc" output.
+creation_rules:
+  - path_regex: \.env(\.enc)?$
+    key_groups:
+      - age:
+          - age16hu2asp7qa8ywqy2q02npr6er5hur0n9f6rk528ymnl3556fae2sq8xkn5
+          # add each teammate's age public key here (one per line, same
+          # indentation) - run `age-keygen` and send the repo admin the
+          # `# public key:` line it prints, never the private key file

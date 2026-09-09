@@ -8,5 +8,12 @@ __pycache__/
 silver/silver_orchestrator/data/*.jsonl
 
 # Secrets - never committed. See .env.example for the expected keys.
+# .env.enc (the SOPS+age-encrypted copy) is deliberately NOT listed here -
+# it's the tracked, committed artifact; see "Secrets management (SOPS + age)"
+# in CLAUDE.md.
 .env
 .env.local
+
+# Private age keys - never committed, whatever they're named.
+age-key.txt
+*key*.txt

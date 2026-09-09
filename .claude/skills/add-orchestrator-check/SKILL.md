@@ -20,6 +20,19 @@ of the datapoint functions are legitimately empty on real pages (see
 `/review-contract`). When in doubt, a quality penalty or drift warning is
 the safer default; hard requirements should be rare and deliberate.
 
+## Which contract dict does this change belong to?
+
+`contracts.py` now defines three: `DATAPOINT_CONTRACTS` (Firecrawl),
+`APIFY_COMPANY_CONTRACTS`, `APIFY_PEOPLE_CONTRACTS`. Confirm which one
+your change targets before editing anything - `schema_gate.evaluate_row`/
+`quality_score.compute_quality_score` both take the contract dict as a
+parameter, so "add a check" always means "for this specific dict," never
+all three at once. If the field belongs to a source with **no contract
+dict yet** (nothing under `silver/<source>/` calls `evaluate_record()`
+against a dict of its own), that's the trigger to invoke
+`/update-orchestrator` and get a reviewed proposal for the new dict,
+rather than hand-adding one ad hoc here.
+
 ## Adding a hard requirement (`schema_gate.py`)
 
 1. If it's just "this required field must be non-empty," check whether

@@ -115,6 +115,78 @@ machine's global Python:
   with `poetry add --group dev <package>`. There is no `requirements.txt`
   (retired in favor of `pyproject.toml` + `poetry.lock`) - don't recreate one.
 
+## Secrets management (SOPS + age)
+
+Real API keys never go into git as plaintext. The repo tracks an
+encrypted `.env.enc`; each developer decrypts their own local `.env` from
+it (gitignored, never committed) using their personal age key.
+
+**One-time per-developer setup:** run `/add-secrets-recipient` - it
+installs `sops`/`age` via winget if you don't have them, generates your
+keypair and shows it to you **exactly once** (it never writes the private
+key to disk itself - copy it and save it yourself, wherever you trust;
+see the skill for why and where `sops` will later expect to find it), and
+adds your public key to `.sops.yaml` for you. It cannot re-encrypt
+`.env.enc` itself (that needs plaintext access, which only an existing
+recipient has) - after it runs, the admin still has to pull the updated
+`.sops.yaml` and re-encrypt (see below). Once that's done, run
+`/decrypt-secrets` to get your own working `.env`.
+
+**Day-to-day:** `make` is **not guaranteed to be installed** (it isn't,
+by default, on a plain Windows box - confirmed the hard way while
+building this). If you have it, `make secrets-decrypt` /
+`make secrets-encrypt` are shorthand for the two commands below; if not,
+run the `sops` commands directly:
+- Decrypt `.env.enc` into a local `.env` (after `poetry install` - see
+  below - and any time `.env.enc` changes upstream):
+  ```
+  sops --input-type dotenv --output-type dotenv -d .env.enc > .env
+  ```
+- Re-encrypt your local `.env` into `.env.enc`, for whoever is updating
+  the shared secrets (only do this with a real, complete `.env` - it
+  overwrites `.env.enc` for the whole team once committed):
+  ```
+  sops --input-type dotenv --output-type dotenv -e .env > .env.enc
+  ```
+- The Makefile targets fail with a clear error if `sops` isn't on `PATH`;
+  the raw commands above just error directly from `sops` itself.
+- **`.env` stays gitignored and is never committed** - only `.env.enc` is
+  the tracked, shareable artifact. `.env.example` (the plaintext template
+  of expected keys with placeholder values) is unaffected by any of this.
+
+**On `poetry install`:** Poetry has no clean, dependency-free post-install
+hook (that requires a third-party plugin, which felt like the wrong
+tradeoff just for this), so decrypting is **not** wired to run
+automatically. Run `/decrypt-secrets` (or `make secrets-decrypt`/the raw
+`sops` command above) manually right after `poetry
+install` on a fresh checkout.
+
+**Gotchas found live, not hypothetical (2026-09-09):** the first
+`.env.enc` committed to this repo was silently broken - `sops -d` failed
+with `Could not unmarshal input data`, not a key-mismatch error. Root
+causes, both now fixed in `.sops.yaml`/`Makefile`:
+- `input_type`/`output_type` are **not real `creation_rules` keys** -
+  sops only accepts them as CLI flags (`--input-type`/`--output-type`).
+  They sat in `.sops.yaml` as silently-ignored no-ops, so sops fell back
+  to guessing format from each filename's extension - `.env` on encrypt
+  (dotenv), `.enc` on decrypt (not a recognized extension, falls back to
+  a JSON-shaped guess) - two different formats that can never read each
+  other back. Fixed by pinning `--input-type dotenv --output-type dotenv`
+  explicitly in both Makefile targets and dropping the dead keys from
+  `.sops.yaml`.
+- Windows gotcha: this repo's `sops` (a native Windows binary) looks for
+  the default age identity at `%AppData%\sops\age\keys.txt`
+  (`C:\Users\<you>\AppData\Roaming\sops\age\keys.txt`), **not**
+  `~/.config/sops/age/keys.txt` (the XDG path `age-keygen`'s own docs
+  reference, and what you get on Linux/Mac). If decrypt fails with
+  "failed to load age identities" despite a real key existing, either
+  move/copy the key to the AppData path above or set
+  `SOPS_AGE_KEY_FILE` to wherever it actually lives.
+- Also stripped a UTF-8 BOM that had ended up at the start of
+  `.sops.yaml` (harmless here since sops parsed the rest of the config
+  fine either way, but worth knowing about if a future YAML tool run
+  against this file complains about its first character).
+
 ## Working agreements (token/credit-conscious operation)
 
 - **Prefer direct tools over agents.** Use Read/Grep/Glob directly for
@@ -156,6 +228,15 @@ machine's global Python:
   or module (purpose, mechanism, inputs/outputs, failure modes, explicit
   exclusions) via a strict fixed-section template - for "how does this
   file work," not "how does this repo fit into Artemis."
+- `/add-secrets-recipient` - self-service, one-shot flow for a new
+  teammate to generate their own age keypair (installing `sops`/`age` via
+  winget if missing), see it exactly once to save themselves, and get
+  added to `.sops.yaml`, with no manual YAML editing. Doesn't decrypt or
+  re-encrypt anything - the admin still has to re-encrypt afterwards (see
+  "Secrets management (SOPS + age)" above).
+- `/decrypt-secrets` - decrypt `.env.enc` into a local `.env`, gated on
+  already being a listed recipient in `.sops.yaml`. Points at
+  `/add-secrets-recipient` if it isn't set up yet.
 
 ## 2026-09-07 addition: crawl triage, content integrity, placeholder guard
 

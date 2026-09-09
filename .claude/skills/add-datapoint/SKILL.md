@@ -5,6 +5,16 @@ description: Scaffold a new Firecrawl datapoint extractor (base class subclass, 
 
 # Add a new Firecrawl datapoint function
 
+**First, confirm the source.** This skill teaches the Firecrawl pattern
+below (`DataPointExtractor` subclass + `base.REGISTRY` + import-order
+registration). If the new field's source is Apify (or any future source
+that isn't a live markdown scrape), that pattern doesn't apply - use the
+simpler plain-function pattern instead: one function per file under
+`silver/apify/<company|people>/<universal|secondary>/datapoints/`, no
+base class, no registry, wired manually into that source's `extract.py`
+(and `loader.py` if it needs one). Ask which pattern applies before
+scaffolding if it isn't already obvious from the request.
+
 Before writing code, confirm with the user (or infer from their request):
 - The function's snake_case name (this becomes the filename, the class
   `name` attribute, and the dict key in every row).

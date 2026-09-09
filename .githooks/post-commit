@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Auto-runs context-sync (read-only, report-only) after every commit.
+# Never applies changes — a human reviews .claude/context-sync/pending-*.md
+# and runs Claude Code interactively to approve/apply specific items.
+if command -v claude >/dev/null 2>&1; then
+  claude -p "/context-sync" --output-format text \
+    >> ".claude/context-sync/hook-log.txt" 2>&1 &
+fi

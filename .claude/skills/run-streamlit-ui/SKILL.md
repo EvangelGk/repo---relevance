@@ -39,14 +39,14 @@ learned the hard way - don't rediscover these:
   sets the value but never fires Streamlit's `on_change` rerun, so anything
   gated on the new value (like the Run button's disabled state) won't
   update.
-- **The "Run Firecrawl" button starts disabled** and only becomes enabled
-  after the rerun that follows the blur above. Poll for it instead of a
-  fixed sleep:
+- **The "Run audit" button starts disabled** (Firecrawl Audit tab) and
+  only becomes enabled after the rerun that follows the blur above. Poll
+  for it instead of a fixed sleep:
   ```python
   page.wait_for_function(
       """() => {
           const btns = [...document.querySelectorAll('button')]
-              .filter(b => b.innerText.includes('Run Firecrawl'));
+              .filter(b => b.innerText.includes('Run audit'));
           return btns.length > 0 && !btns[0].disabled;
       }""",
       timeout=15000,
@@ -62,13 +62,17 @@ learned the hard way - don't rediscover these:
   ```
   To see columns beyond the first screen, move the mouse over the grid and
   scroll it horizontally: `page.mouse.wheel(2000, 0)` (repeat a few times;
-  small waits between calls).
-- **Two "download" buttons exist on the result table** - the dataframe's
-  built-in toolbar download icon, and the app's own `st.download_button`.
-  Target the real one specifically:
+  small waits between calls). This still applies to the "Session history"
+  table at the bottom of the Firecrawl Audit tab - the per-row result
+  itself is no longer a dataframe at all (see below).
+- **Only one download button exists now** - the per-row result display
+  was redesigned (2026-09-08) into cards, not a `st.dataframe`, so there's
+  no toolbar download icon to disambiguate from anymore. The app's own
+  `st.download_button` is still the right target:
   `page.get_by_test_id("stDownloadButton").get_by_role("button")` - a bare
-  `get_by_role("button", name="Download as CSV")` matches both and raises a
-  strict-mode violation.
+  `get_by_role("button", name="Download as CSV")` still works today too,
+  but keep using the specific selector in case a dataframe-backed download
+  control gets added back later.
 - **Always check `console --errors` equivalent before declaring success:**
   ```python
   errors = []
@@ -79,19 +83,29 @@ learned the hard way - don't rediscover these:
 
 ## What to verify on the golden path
 
-1. Paste `silver/firecrawl/tests/sample_input.md` -> click Run Firecrawl ->
-   a result table appears with `quality_score`, `is_valid_row`,
-   `rejection_reasons` as the first three columns and
-   `raw_markdown_input` last; `is_valid_row` is checked/True; the row is
-   NOT pink-highlighted.
+This app now has two tabs (`🔍 Firecrawl Audit`, `🧩 Unified Row
+Preview`); the walkthrough below is for the first, which is where a
+Firecrawl/SilverOrchestrator change actually needs verifying. The second
+tab is an explicitly-labeled preview of `silver/company|people/`
+connectors, not wired into any production pipeline - only drive it if
+your change touches those connectors specifically.
+
+1. Paste `silver/firecrawl/tests/sample_input.md` into the "Or paste
+   cleaned markdown" box -> click "Run audit" -> a card header appears:
+   quality score colored green (>=80), "✅ **Valid row**", crawl_status
+   and content_integrity shown; no red rejection banner; no drift
+   warning; the "Datapoints" section below shows grouped
+   Identity/Descriptive/Signals expanders with a source-colored chip per
+   field.
 2. Paste a lottery-shaped snippet (e.g. `"## Tonight's Draw Results\n\nThe
    winning numbers for tonight's lottery jackpot were 4, 8, 15, 16, 23,
-   42.\n"`) -> re-run -> `is_valid_row` is False, `quality_score` is 0.0, a
-   "Rejected: [...]" warning banner appears, and the row IS
-   pink-highlighted.
+   42.\n"`) -> re-run -> score colored red, "🚫 **Rejected row**", and a
+   red `st.error("Rejected - reasons: [...]")` banner. There is no
+   row-highlighting concept in this app anymore (that was the old,
+   retired single-table app) - don't look for it.
 3. Click "Download as CSV" (via the `stDownloadButton` selector above) and
    read the file back with `pandas.read_csv` - confirm the same column
-   order survives (styling doesn't survive to CSV, the column order does).
+   order survives.
 
 ## Clean up after
 
