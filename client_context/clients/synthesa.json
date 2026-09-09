@@ -1,0 +1,27 @@
+{
+  "client_id": "synthesa",
+  "name": "Synthesa - Medical Affairs decision makers (Pharma / Medical Device / Biotech)",
+  "industries": ["Pharmaceutical Manufacturing", "Medical Devices", "Biotechnology"],
+  "company_size_buckets": [],
+  "hq_countries": [
+    "United States", "Canada", "United Kingdom",
+    "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czechia", "Denmark",
+    "Estonia", "Finland", "France", "Germany", "Greece", "Hungary", "Iceland",
+    "Ireland", "Italy", "Latvia", "Liechtenstein", "Lithuania", "Luxembourg",
+    "Malta", "Netherlands", "Norway", "Poland", "Portugal", "Romania",
+    "Slovakia", "Slovenia", "Spain", "Sweden", "Switzerland"
+  ],
+  "hq_cities": [],
+  "technologies": [],
+  "description_keywords": [],
+  "products_and_services": [],
+  "exclude_domains": [],
+  "limit": 100,
+  "notes": "Extracted from the 2026-06-19 onboarding call transcript (Synthesa.docx). Synthesa is an AI-enabled medical-evidence consultancy (systematic literature reviews / meta-analyses answering a client's clinical question from published evidence) selling into three sub-verticals with DIFFERENT decision-maker titles and DIFFERENT size rules, which this flat schema can't express as one query - see bronze/clay's build_people_query, which only ANDs one job_title list against one industry/size/location scope. This file is the reference/union ICP; the actual live search for synthesa_people_table_v1.csv ran as two separate segment queries: (1) Pharma + Medical Device: job titles Chief Medical Officer / Director of Medical Affairs / VP Medical Affairs / VP Strategy, no size cap (Medical Device explicitly 'regardless of size'; Pharma's ~5,000-employee number was stated as an ideal, not a hard cutoff). (2) Biotech: job titles Founder / CEO / Chief Scientific Officer (biotech is pre-medical-affairs-department stage; decision maker is usually the founder, who typically has a medical/scientific background). End target across all segments is the prescribing physician, not the patient - Medical Affairs is 'marketing to doctors' backed by literature evidence, not commercial/patient marketing. Geography: all of Europe + North America (US, Canada) + UK explicitly called out; Japan and China explicitly ruled out ('different culture, different way of doing business') - hq_countries above is a representative EU/EEA + UK + US/Canada list, not exhaustive of every European enum value.",
+  "created_at": "2026-06-19T00:00:00+00:00",
+  "people_job_title_include": [],
+  "people_job_title_exclude": [],
+  "people_match_mode": "CONTAINS",
+  "people_max_per_company": 5,
+  "people_enrich_min_quality_score": 70.0
+}
