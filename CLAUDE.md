@@ -19,6 +19,7 @@ repo root/
     schema.py                     - ClientContext dataclass, load/validate, Clay enum constants
     clients/                      - one JSON file per client context
   bronze/                         - Artemis step 3 (pull from source)
+    CONVENTIONS.md                - primary key, column-vs-JSON, and naming rules for a client's processed/ CSVs
     clay/                         - Clay public API: company search driven by a ClientContext
       _http.py                    - stdlib-only authenticated client (CLAY_PUBLIC_API_KEY)
       query_builder.py            - ClientContext -> Clay search-query-language string
@@ -462,3 +463,101 @@ using Search Person as a people source needs its own account regardless.
   documented anywhere Clay-adjacent; verify against the account's own
   credit/usage history, not this comment, before relying on it.
 - `.env` / `.env.example` extended with `PROSPEO_API_KEY`.
+
+## 2026-09-09 addition: bronze/CONVENTIONS.md
+
+Written after a live trial run of `bronze/firecrawl` against
+`trial-fintech-us-uk` (100 companies from
+`trial_fintech_us_uk_clay_companies.csv`) went through several rounds of
+"not quite that output shape" - a wide flattened CSV (nested dict/list
+datapoint fields turned into unparseable Python-repr strings by a plain
+`pandas.to_csv()`), then a single mega-JSON-column including a full
+Silver-layer run, then a single column with no identity fields at all,
+before landing on the shape `bronze/CONVENTIONS.md` now writes down:
+`clay_company_id`/`name`/`domain`/`linkedin_url` as real columns (the
+"identity spine"), everything a bronze function itself produces packed
+unflattened into one `<source>_<step>_json` column, and a company's full
+original metadata (industry, description, funding range, ...) deliberately
+NOT carried through intermediate steps - joined back in by
+`clay_company_id` only at the final merge.
+
+- Also corrected mid-conversation: an earlier assumption that this JSON
+  blob needed to fit Clay's column-size caps (8,000 chars
+  basic/formula, 200KB action/HTTP-API - see the 2026-09-08 bronze/firecrawl
+  addition above) turned out not to apply here - the markdown-cleaning
+  step downstream of this CSV runs in the terminal, not as a Clay column,
+  so no truncation of `markdown` belongs in this intermediate output.
+- `client_context/clients/trial-fintech-us-uk/processed/firecrawl_scrape.csv`
+  is the first CSV built to this shape - columns
+  `clay_company_id, name, domain, linkedin_url, firecrawl_scrape_json`,
+  the last holding `bronze/firecrawl/scrape.py`'s own
+  `{markdown, source_url, title, status_code, scrape_status,
+  scrape_error}` output, unflattened, for each of the 100 trial companies.
+
+## 2026-09-09 addition: bronze/clay/query_builder.py regrounded on the clay-search-query skill + build_people_query()
+
+Found while exploring how to get real boolean job-title logic into Clay
+search (a `select from people` DSL search, distinct from
+`bronze/prospeo/`): this machine has a `clay-search-query` Claude skill
+(`repo -- relevance -- context/clay-search-query/clay-search-query/SKILL.md`,
+outside this repo) that is a fuller, worked-example-backed authoring
+reference for Clay's query-mode DSL than the narrower
+`GET /search/query-mode/reference` pull `query_builder.py` was originally
+grounded in on 2026-09-08 - same underlying DSL/endpoint, more rules and
+worked examples, and explicit coverage of `select from people` (which the
+2026-09-08 pull's grounding never touched - `build_company_query` was
+companies-only). Re-grounding `query_builder.py` against it, per user
+direction to "do all searches like that":
+
+- **`build_company_query` bug fix, not just a re-ground**: `technologies`
+  used to open one `technographics.any(...)` **per requested tech**, OR'd
+  together at the top level - N table scans for N technologies. The skill's
+  "OR alternatives can share one `.any(... in (...))`" rule collapses this
+  into a single `technographics.any(vendor in (...) or product in (...))`
+  scan covering every requested tech at once.
+- **`build_people_query(context) -> str | None`** (new) - a
+  `select from people where experiences.any(...)` query, gated on
+  `context.people_job_title_include` the same way
+  `bronze/prospeo/search.py`'s `run_people_search_for_company` gates on it
+  (`None` when empty - "an unscoped global search is never the right
+  call"). Every condition lives inside **one** `experiences.any(...)`
+  block - per the skill's "Experience expressions" section, splitting one
+  role's conditions across multiple `experiences.any()` calls changes the
+  meaning (each arm can then be satisfied by a *different* experience) and
+  costs one extra scan per arm. `job_title` uses `is_similar_to` (best
+  recall) with exclusions kept as `not job_title is_similar_to (...)`
+  inside that same block, never dropped or split out. The rest of this
+  repo's `ClientContext` company-ICP fields (`industries`,
+  `company_size_buckets`, `hq_countries`/`hq_cities`, `technologies`,
+  `products_and_services`, `description_keywords`) are reused as-is to
+  scope the *target employer* via the `company.*` fields the skill
+  documents as valid inside an experience expression
+  (`company.industry`, `company.company_size`, `company.locations.any(...)`,
+  `company.technographics.any(...)`, `company.products_and_services
+  is_similar_to (...)`, `company.description contains (...)`) - so one
+  `ClientContext` now drives "companies matching this ICP" AND "people in
+  this role at companies matching this ICP" without new fields.
+- `bronze/clay/search.py` - `run_people_search(context)` added alongside
+  `run_company_search`, both now sharing one `_run_query_mode_search()`
+  create+paginate helper (previously duplicated inline in
+  `run_company_search`). Returns `{"people": [], "source_type": None,
+  "query": None}` without calling Clay at all when
+  `build_people_query()` returns `None`.
+- **Confirmed live, not just unit-tested**: a `ClientContext` with
+  `industries=("Financial Services",)`,
+  `company_size_buckets=("11-50", "51-200")`,
+  `hq_countries=("United States", "United Kingdom")`,
+  `people_job_title_include=("VP Sales", "Head of Sales")` returned a real
+  match - David Coleman, Head of Sales at Positive Lending (UK) - through
+  `run_people_search`. Gotcha for later: the raw person dicts Clay returns
+  use `name`/`first_name`/`last_name`, a nested `location` object, and a
+  `matched_experiences` array - not the DSL's own field names
+  (`full_name`, `location_city`, etc.) - same "raw dicts, unmodified,
+  mapping onto a Silver row is a separate step" contract
+  `run_company_search` already documents.
+- **Not done here**: no decision yet on whether `run_people_search`
+  replaces, complements, or stays parallel to `bronze/prospeo/`'s people
+  search in `bronze/pipeline.py` - Clay Search explicitly cannot return
+  emails/phones (per the skill's Dataset Capabilities section), so Prospeo
+  or another enrichment step would still be needed for contact reveal
+  either way. `bronze/pipeline.py` is unchanged.

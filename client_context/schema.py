@@ -233,6 +233,8 @@ _TUPLE_FIELDS = (
     "description_keywords",
     "products_and_services",
     "exclude_domains",
+    "people_job_title_include",
+    "people_job_title_exclude",
 )
 
 
@@ -260,6 +262,32 @@ class ClientContext:
     limit: int = 100
     notes: Optional[str] = None
     created_at: Optional[str] = None
+
+    # People-search half of this ICP (bronze/prospeo/search.py), added
+    # 2026-09-09 - v1 scope decided in the terminal is job-title only;
+    # seniority/department/person-location filters are deliberately not
+    # modeled here yet (Prospeo's own filter catalog for them isn't
+    # confirmed - see bronze/prospeo/search.py's module docstring).
+    # `people_match_mode` mirrors search_person()'s own default and is
+    # intentionally NOT enum-validated below (same reasoning as
+    # hq_countries/hq_cities: only "CONTAINS" is confirmed working today,
+    # so hard-coding a guessed enum here would block testing whatever
+    # value the real API turns out to accept).
+    people_job_title_include: Tuple[str, ...] = ()
+    people_job_title_exclude: Tuple[str, ...] = ()
+    people_match_mode: str = "CONTAINS"
+    # Per-company cap on people pulled per search - applied client-side in
+    # run_people_search_for_company, not passed to Prospeo as a request
+    # parameter (no confirmed Prospeo field for this yet).
+    people_max_per_company: int = 5
+    # Gates auto-enrichment (bronze/prospeo/enrich_person.py, revealing
+    # email/mobile) on the company's own Silver quality_score - a company
+    # row this pipeline already scored as low-quality isn't worth the
+    # extra enrich credits regardless of which people matched on it. NOT
+    # wired to enrich_person() yet (see bronze/pipeline.py's
+    # run_people_search_for_batch docstring) - this field exists so the
+    # threshold is decided and validated now, ahead of that follow-up.
+    people_enrich_min_quality_score: float = 70.0
 
 
 def _validate(data: dict) -> List[str]:
@@ -290,6 +318,26 @@ def _validate(data: dict) -> List[str]:
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
         violations.append("limit: must be a positive integer")
 
+    people_match_mode = data.get("people_match_mode", "CONTAINS")
+    if not isinstance(people_match_mode, str) or not people_match_mode:
+        violations.append("people_match_mode: must be a non-empty string")
+
+    people_max_per_company = data.get("people_max_per_company", 5)
+    if (
+        not isinstance(people_max_per_company, int)
+        or isinstance(people_max_per_company, bool)
+        or people_max_per_company <= 0
+    ):
+        violations.append("people_max_per_company: must be a positive integer")
+
+    people_enrich_min_quality_score = data.get("people_enrich_min_quality_score", 70.0)
+    if (
+        not isinstance(people_enrich_min_quality_score, (int, float))
+        or isinstance(people_enrich_min_quality_score, bool)
+        or not 0 <= people_enrich_min_quality_score <= 100
+    ):
+        violations.append("people_enrich_min_quality_score: must be a number between 0 and 100")
+
     return violations
 
 
@@ -319,6 +367,11 @@ def load_client_context(path: str) -> ClientContext:
         limit=data.get("limit", 100),
         notes=data.get("notes"),
         created_at=data.get("created_at"),
+        people_job_title_include=tuple(data.get("people_job_title_include") or ()),
+        people_job_title_exclude=tuple(data.get("people_job_title_exclude") or ()),
+        people_match_mode=data.get("people_match_mode", "CONTAINS"),
+        people_max_per_company=data.get("people_max_per_company", 5),
+        people_enrich_min_quality_score=data.get("people_enrich_min_quality_score", 70.0),
     )
 
 
