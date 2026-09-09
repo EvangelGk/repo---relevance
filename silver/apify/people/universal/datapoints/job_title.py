@@ -1,7 +1,7 @@
 """extract_job_title(raw_apify_person: dict) -> str | None
 
 Raw free-text job title off the Apify LinkedIn person record. Feeds
-`apify/people/secondary/datapoints/seniority.py`.
+`apify/people/universal/datapoints/seniority.py`.
 """
 from typing import Any, Dict, Optional
 

@@ -9,6 +9,17 @@ Referenced by `silver/people/connector.py` but did not exist as a file
 until 2026-09-08 - the connector previously (incorrectly) treated
 `seniority` as a flat Apify passthrough field, which isn't real: LinkedIn
 only ever returns a free-text title, never a seniority enum directly.
+
+**Moved here from `apify/people/secondary/` on 2026-09-09.** Originally
+kept out of `universal/` specifically because it isn't a raw Apify field -
+"universal" meant "raw-field extractor" up to that point. Redefined at
+explicit user direction to instead mean "a field present on every person
+record regardless of source shape" - every LinkedIn profile has *some*
+title, so its derived seniority is as universally available as any raw
+field, unlike `employed_company` (still secondary: needs resolving a full,
+possibly-absent experience array, not just transforming one always-present
+scalar). See `universal/README.md` and `secondary/README.md` for the full
+rationale.
 """
 import re
 from typing import Optional

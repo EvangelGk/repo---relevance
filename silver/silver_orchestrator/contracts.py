@@ -214,6 +214,15 @@ APIFY_PEOPLE_CONTRACTS: Dict[str, DatapointContract] = {
         null_tolerance_pct=20.0,
         source_priority=("apify",),
     ),
+    "seniority": DatapointContract(
+        required=False,
+        # added 2026-09-09 (moved from secondary/ - see seniority.py's
+        # docstring). Derived from job_title via a keyword ladder that
+        # always returns a value once job_title is non-empty (falls back
+        # to IC), so its null rate tracks job_title's directly.
+        null_tolerance_pct=20.0,
+        source_priority=("apify",),
+    ),
     "country": DatapointContract(
         required=False,
         null_tolerance_pct=35.0,
@@ -222,6 +231,23 @@ APIFY_PEOPLE_CONTRACTS: Dict[str, DatapointContract] = {
     "linkedin_about": DatapointContract(
         required=False,
         null_tolerance_pct=50.0,  # the About section is frequently left blank
+        source_priority=("apify",),
+    ),
+    "age": DatapointContract(
+        required=False,
+        # added 2026-09-09. No evidentiary basis at all, unlike the fields
+        # above - LinkedIn doesn't publicly expose birthdate/age on a
+        # profile, so most Apify actors have nothing to report here. Set
+        # high rather than guessed low; see age.py's docstring caveat.
+        null_tolerance_pct=95.0,
+        source_priority=("apify",),
+    ),
+    "company_industry": DatapointContract(
+        required=False,
+        # added 2026-09-09. A flat convenience field some LinkedIn
+        # person-actors attach, others don't - no real sample to confirm
+        # a rate against yet (see company_industry.py's docstring).
+        null_tolerance_pct=50.0,
         source_priority=("apify",),
     ),
 }

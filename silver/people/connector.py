@@ -17,8 +17,9 @@ because there's nothing real to resolve.
 read as flat keys straight off `apify_person`, which isn't real - Apify
 never returns either directly. `seniority` is now derived from
 `apify_person["job_title"]` via `function_seniority`
-(`apify/people/secondary/datapoints/seniority.py`). `employed_company` is
-derived from `raw_experience` (the person's raw LinkedIn work-history
+(`apify/people/universal/datapoints/seniority.py` - moved here from
+`secondary/` on 2026-09-09, see that module's docstring). `employed_company`
+is derived from `raw_experience` (the person's raw LinkedIn work-history
 array) via `function_experience_array_resolve`
 (`apify/people/secondary/datapoints/experience_array_resolve.py`), picking the
 current entry's `company` string - falls back to a flat
@@ -30,12 +31,23 @@ person rows to a real `company_id` would need a further call into
 `company_entity_resolve` (Firecrawl-side, company-scoped) on that name,
 which isn't done here - open item, not solved by this connector.
 
+**Added 2026-09-09**: `age` and `company_industry` joined the universal
+set (`apify/people/universal/datapoints/age.py` /
+`company_industry.py`) - both flat, possibly-`None` convenience fields
+straight off the raw Apify record, tagged `_source: "apify"` via the same
+generic loop as `linkedin_url`/`full_name`/etc. `company_industry` is the
+person's employer's industry as Apify happens to report it on the person
+record itself, not a join against `company/universal/datapoints/
+industry.py`'s output - no such join is wired anywhere in this repo yet
+(same open gap as `employed_company` -> `company_id` above).
+
 Inputs:
   - `apify_person`: output of `apify/people/universal/extract.py`
     (`extract_person_universal_fields`) - a
-    dict with `linkedin_url`, `full_name`, `job_title`, `country`,
-    `linkedin_about` (all `_source: "apify"`), plus optionally a flat
-    `employed_company` fallback key (see above).
+    dict with `linkedin_url`, `full_name`, `job_title`, `seniority`,
+    `country`, `linkedin_about`, `age`, `company_industry` (all
+    `_source: "apify"`), plus optionally a flat `employed_company`
+    fallback key (see above).
   - `prospeo_person`: Prospeo export row - `email` (`_source: "prospeo"`)
     plus any other columns Prospeo happens to include, passed through
     rather than dropped, each getting its own `<field>_source: "prospeo"`
@@ -59,7 +71,7 @@ Apify half's own extraction quality, gated via
 from typing import Any, Dict, List, Optional
 
 from silver.apify.people.secondary.datapoints.experience_array_resolve import function_experience_array_resolve
-from silver.apify.people.secondary.datapoints.seniority import function_seniority
+from silver.apify.people.universal.datapoints.seniority import function_seniority
 from silver.silver_orchestrator.contracts import APIFY_PEOPLE_CONTRACTS
 from silver.silver_orchestrator.dead_letter import DeadLetterQueue
 from silver.silver_orchestrator.drift import DriftTracker
@@ -67,6 +79,7 @@ from silver.silver_orchestrator.orchestrator import build_function_report, evalu
 
 _APIFY_UNIVERSAL_FIELDS = (
     "linkedin_url", "full_name", "job_title", "country", "linkedin_about",
+    "age", "company_industry",
 )
 _PROSPEO_KNOWN_FIELDS = ("email",)
 

@@ -16,7 +16,13 @@ nothing calls that connector for real. Each module has its own test in
 | `datapoints/bio_entity_extract.py` | `function_bio_entity_extract` | Regex entity extraction (URLs, `at <Company>`, `@<Handle>`) from bio/about free text |
 | `datapoints/fund_role_normalize.py` | `function_fund_role_normalize` | VC/PE-specific title vocabulary - deliberately NOT the same enum as `function_seniority` |
 | `datapoints/person_certifications.py` | `function_person_certifications` | People-side analog of Firecrawl's `compliance_framework_extract` - see its own docstring |
-| `datapoints/seniority.py` | `function_seniority` | Was missing entirely at first - `silver/people/connector.py` referenced a flat `seniority` passthrough field that Apify doesn't actually return; this derives it from `job_title` instead. |
+
+**`seniority.py` moved to `apify/people/universal/datapoints/` on
+2026-09-09** - see that module's docstring and `universal/README.md` for
+why: "universal" was redefined from "raw-field extractor" to "a field
+present on every person record regardless of source shape," which
+`seniority` (always derivable once `job_title` is non-empty) qualifies
+for even though it's still a derived, not raw, value.
 
 ## Task 4 decisions (recorded here, not in a separate migration doc)
 

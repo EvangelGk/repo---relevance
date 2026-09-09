@@ -1,4 +1,4 @@
-from silver.apify.people.secondary.datapoints.seniority import function_seniority
+from silver.apify.people.universal.datapoints.seniority import function_seniority
 
 
 def test_c_level():
