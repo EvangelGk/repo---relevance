@@ -10,6 +10,7 @@ creation_rules:
     key_groups:
       - age:
           - age16hu2asp7qa8ywqy2q02npr6er5hur0n9f6rk528ymnl3556fae2sq8xkn5
+          - age1crlv3lxzm0m4nfzsuf6cz5nesfvjdgjgepl89dkwccykl0zspsysmkq2mj
           # add each teammate's age public key here (one per line, same
           # indentation) - run `age-keygen` and send the repo admin the
           # `# public key:` line it prints, never the private key file
