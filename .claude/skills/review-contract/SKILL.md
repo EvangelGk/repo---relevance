@@ -48,11 +48,15 @@ source further down the list (or not represented at all).
 
 ## 5. `enum_values` only for controlled vocabularies
 
-Currently: `regulatory_event_classify` (a flat tuple) and `business_model`
-(the one nested exception - a tuple of three tuples in `(pricing, offering,
-delivery)` order; read the `DatapointContract` dataclass docstring before
-copying that shape elsewhere). Don't add `enum_values` to a free-text or
-open-ended field.
+Currently: `business_model` (the one nested exception - a tuple of three
+tuples in `(pricing, offering, delivery)` order; read the
+`DatapointContract` dataclass docstring before copying that shape
+elsewhere). No flat-single-tuple example exists in the codebase today -
+`regulatory_event_classify`, the old flat-tuple example, was removed
+2026-09-08 (see `CLAUDE.md`'s datapoint-pruning addendum). If you add a
+flat-enum field, `enum_values` is a single flat tuple of allowed string
+values, not the nested triple `business_model` uses. Don't add
+`enum_values` to a free-text or open-ended field regardless of shape.
 
 ## 6. Contract changes that affect validation logic need matching code changes
 
